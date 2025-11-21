@@ -406,8 +406,12 @@ class VideoPlayer(QWidget):
 
     def media_finished(self, status):
         from PyQt6.QtMultimedia import QMediaPlayer
-        if status == QMediaPlayer.MediaStatus.EndOfMedia and not self.loop_enabled:
-            self.next_video()
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            if self.loop_enabled:
+                self.player.setPosition(0)
+                QTimer.singleShot(50, self.player.play)
+            else:
+                self.next_video()
 
     def update_controls_visibility(self, state=None):
         # Only show controls if the video is paused

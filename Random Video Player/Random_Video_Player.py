@@ -553,6 +553,21 @@ class VideoPlayer(QWidget):
 # Run App
 # --------------------------
 if __name__ == "__main__":
+    # Best-effort hide/close any console created by python.exe on Windows.
+    # This will hide the console even when the script is launched with python.exe.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.windll.user32
+            hwnd = kernel32.GetConsoleWindow()
+            if hwnd:
+                SW_HIDE = 0
+                user32.ShowWindow(hwnd, SW_HIDE)   # hide console window
+                kernel32.FreeConsole()             # detach from console
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     player = VideoPlayer()
     player.show()

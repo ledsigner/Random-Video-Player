@@ -1,16 +1,17 @@
-import sys
+﻿import sys
 import os
 import random
 import subprocess
 import platform
 import cv2
-from PyQt6.QtCore import Qt, QUrl, QSettings, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QUrl, QSettings, pyqtSignal, QTimer, QEvent, QSize
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QStyle,
     QPushButton, QSlider, QLabel, QComboBox, QFileDialog, QLineEdit, QFrame
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtGui import QIcon
 
 # --------------------------
 # Clickable Video Frame
@@ -20,28 +21,103 @@ class ClickableVideoFrame(QFrame):
     clickedMiddle = pyqtSignal()
     clickedRight = pyqtSignal()
     clickedTop = pyqtSignal()
-    doubleClickedLeft = pyqtSignal()  # new signal for double left click
+    clickedBottom = pyqtSignal()
+    doubleClickedMiddle = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # === TIMER #1: delayed single click (~200 ms) ===
+        self._single_delay_timer = QTimer()
+        self._single_delay_timer.setSingleShot(True)
+        self._single_delay_timer.timeout.connect(self._emit_delayed_single)
+
+        # === TIMER #2: double-click window (~400 ms) ===
+        self._double_timeout_timer = QTimer()
+        self._double_timeout_timer.setSingleShot(True)
+        self._double_timeout_timer.timeout.connect(self._reset_double_click)
+
+        # states
+        self._waiting_single = False
+        self._waiting_double = False
+
+        # tunable timings
+        self.single_delay_ms = 200
+        self.double_timeout_ms = 400
 
     def mousePressEvent(self, event):
         y = event.position().y()
+        h = self.height()
         w = self.width()
         x = event.position().x()
+        third = w / 3
 
-        # Top click detection (first 20 pixels)
-        if y < 20:
+        # ==================== TOP AREA ====================
+        if event.button() == Qt.MouseButton.LeftButton and y < 20:
             self.clickedTop.emit()
             return
-        
+
+        # ==================== BOTTOM AREA ====================
+        if event.button() == Qt.MouseButton.LeftButton and (h - y) < 90:
+            self.clickedBottom.emit()
+            return
+
+        # ==================== LEFT AREA ====================
+        if event.button() == Qt.MouseButton.LeftButton and x < third:
+            self.clickedLeft.emit()
+            return
+
+        # ==================== RIGHT AREA ====================
+        if event.button() == Qt.MouseButton.LeftButton and x >= 2 * third:
+            self.clickedRight.emit()
+            return
+
+        # ==================== MIDDLE AREA CLICK ====================
         if event.button() == Qt.MouseButton.LeftButton:
-            third = w / 3
-            if x < third:
-                self.clickedLeft.emit()
-            elif x < 2 * third:
-                self.clickedMiddle.emit()
+
+            # FIRST CLICK
+            if not self._waiting_double:
+                self._waiting_double = True
+                self._waiting_single = True
+
+                self._single_delay_timer.start(self.single_delay_ms)
+                self._double_timeout_timer.start(self.double_timeout_ms)
+                return
+
+            # SECOND CLICK
             else:
-                self.clickedRight.emit()
-        elif event.button() == Qt.MouseButton.RightButton:
+                # if single hasn't fired yet → cancel it
+                if self._waiting_single:
+                    self._single_delay_timer.stop()
+                    self._waiting_single = False
+                else:
+                    # emit single-click for the second click
+                    self.clickedMiddle.emit()
+
+                # emit double-click
+                self.doubleClickedMiddle.emit()
+
+                # reset
+                self._waiting_double = False
+                self._double_timeout_timer.stop()
+                return
+
+        # ==================== RIGHT CLICK ====================
+        if event.button() == Qt.MouseButton.RightButton:
             self.parent().toggle_fullscreen()
+
+
+    # === Timer fired: single click delay expired ===
+    def _emit_delayed_single(self):
+        if self._waiting_single:
+            self.clickedMiddle.emit()
+            self._waiting_single = False
+
+
+    # === Timer fired: double-click window expired ===
+    def _reset_double_click(self):
+        self._waiting_double = False
+        self._waiting_single = False
 
 # --------------------------
 # Clickable Slider
@@ -83,7 +159,8 @@ class VideoPlayer(QWidget):
         self.video_frame.clickedMiddle.connect(self.toggle_play_pause)
         self.video_frame.clickedRight.connect(self.next_video)
         self.video_frame.clickedTop.connect(self.exit_fullscreen)
-        self.video_frame.doubleClickedLeft.connect(self.toggle_fullscreen)
+        self.video_frame.clickedBottom.connect(self.toggle_controls_visibility)
+        self.video_frame.doubleClickedMiddle.connect(self.toggle_fullscreen)
 
         video_layout = QVBoxLayout()
         video_layout.setContentsMargins(0, 0, 0, 0)
@@ -149,22 +226,27 @@ class VideoPlayer(QWidget):
         self.select_folder_btn.setStyleSheet(self.button_style)
         self.select_folder_btn.clicked.connect(self.select_folder)
 
-        self.loop_btn = QPushButton("Loop")
+        self.loop_btn = QPushButton()
         self.loop_btn.setCheckable(True)
-        self.loop_btn.setStyleSheet(self.button_style)
+        self.loop_btn.setIcon(QIcon("icons/loop.svg"))
+        self.loop_btn.setIconSize(QSize(24, 24))
+        self.loop_btn.setStyleSheet("background: transparent; border: none;")
         self.loop_btn.clicked.connect(self.toggle_loop)
         self.loop_enabled = False
 
-        self.mute_btn = QPushButton("Mute")
+        self.mute_btn = QPushButton()
         self.mute_btn.setCheckable(True)
-        self.mute_btn.setStyleSheet(self.button_style)
+        self.mute_btn.setIcon(QIcon("icons/volume.svg"))
+        self.mute_btn.setIconSize(QSize(24, 24))
+        self.mute_btn.setStyleSheet("background: transparent; border: none;")
         self.mute_btn.clicked.connect(self.toggle_mute)
 
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(50)
+        self.volume_slider.setValue(20)
         self.volume_slider.valueChanged.connect(lambda v: self.audio.setVolume(v / 100))
         self.volume_slider.setFixedWidth(100)
+        self.progress.setFixedHeight(12)
 
         self.orientation_label = QLabel("Orientation:")
         self.orientation_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -216,7 +298,6 @@ class VideoPlayer(QWidget):
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(5)
-        controls_layout.addWidget(self.select_folder_btn)
         controls_layout.addWidget(self.loop_btn)
         controls_layout.addWidget(self.mute_btn)
         controls_layout.addWidget(self.volume_slider)
@@ -226,6 +307,7 @@ class VideoPlayer(QWidget):
         controls_layout.addWidget(self.max_len_dec_btn)
         controls_layout.addWidget(self.max_len_input)
         controls_layout.addWidget(self.max_len_inc_btn)
+        controls_layout.addWidget(self.select_folder_btn)
         controls_layout.addWidget(self.explorer_btn)
         controls_layout.addWidget(self.copy_to_btn)
 
@@ -250,8 +332,6 @@ class VideoPlayer(QWidget):
         self.player.positionChanged.connect(self.update_progress)
         self.player.durationChanged.connect(self.update_duration)
         self.player.mediaStatusChanged.connect(self.media_finished)
-        self.player.playbackStateChanged.connect(self.update_controls_visibility)
-        self.update_controls_visibility()  # initial
 
         # Video Data
         self.video_list = []
@@ -272,6 +352,9 @@ class VideoPlayer(QWidget):
             self.play_random_video()
         else:
             self.select_folder()
+
+        self.update_mute_button_style()
+        self.update_loop_button_style()
 
     # --- Video / Folder Methods ---
     def select_folder(self):
@@ -338,7 +421,6 @@ class VideoPlayer(QWidget):
         self.current_index = (self.current_index + 1) % len(self.video_list)
         self.load_video(self.current_index)
         self.player.play()
-        self.controls_container.hide()  # hide immediately
 
     def previous_video(self):
         if not self.video_list:
@@ -346,7 +428,6 @@ class VideoPlayer(QWidget):
         self.current_index = (self.current_index - 1) % len(self.video_list)
         self.load_video(self.current_index)
         self.player.play()
-        self.controls_container.hide()  # hide immediately
 
     def toggle_play_pause(self):
         if self.player.isPlaying():
@@ -365,9 +446,9 @@ class VideoPlayer(QWidget):
             
     def update_loop_button_style(self):
         if self.loop_enabled:
-            self.loop_btn.setStyleSheet(self.button_style_selected)
+            self.loop_btn.setIcon(QIcon("icons/loop.svg"))
         else:
-            self.loop_btn.setStyleSheet(self.button_style)
+            self.loop_btn.setIcon(QIcon("icons/loop-off.svg"))
 
     def toggle_mute(self):
         new_state = not self.audio.isMuted()
@@ -376,9 +457,9 @@ class VideoPlayer(QWidget):
         
     def update_mute_button_style(self):
         if self.audio.isMuted():
-            self.mute_btn.setStyleSheet(self.button_style_selected)
+            self.mute_btn.setIcon(QIcon("icons/volume-off.svg"))
         else:
-            self.mute_btn.setStyleSheet(self.button_style)
+            self.mute_btn.setIcon(QIcon("icons/volume.svg"))
 
     def on_orientation_changed(self, text):
         self.pending_orientation = text
@@ -412,13 +493,6 @@ class VideoPlayer(QWidget):
                 QTimer.singleShot(50, self.player.play)
             else:
                 self.next_video()
-
-    def update_controls_visibility(self, state=None):
-        # Only show controls if the video is paused
-        if self.player.playbackState() == QMediaPlayer.PlaybackState.PausedState:
-            self.controls_container.show()
-        else:
-            self.controls_container.hide()
 
     # --- Max Length ---
     def set_max_length(self, value):
@@ -466,6 +540,12 @@ class VideoPlayer(QWidget):
     def exit_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
+
+    def toggle_controls_visibility(self):
+        if self.controls_container.isVisible():
+            self.controls_container.hide()
+        else:
+            self.controls_container.show()
         
     def start_max_len_hold(self, direction):
         self._max_len_change_direction = direction

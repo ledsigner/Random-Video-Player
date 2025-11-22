@@ -13,6 +13,12 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtGui import QIcon
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and PyInstaller """
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 # --------------------------
 # Clickable Video Frame
 # --------------------------
@@ -228,7 +234,8 @@ class VideoPlayer(QWidget):
 
         self.loop_btn = QPushButton()
         self.loop_btn.setCheckable(True)
-        self.loop_btn.setIcon(QIcon("icons/loop.svg"))
+        loop_off_icon_path = resource_path(os.path.join("icons", "loop-off.svg"))
+        self.loop_btn.setIcon(QIcon(loop_off_icon_path))
         self.loop_btn.setIconSize(QSize(24, 24))
         self.loop_btn.setStyleSheet("background: transparent; border: none;")
         self.loop_btn.clicked.connect(self.toggle_loop)
@@ -236,7 +243,9 @@ class VideoPlayer(QWidget):
 
         self.mute_btn = QPushButton()
         self.mute_btn.setCheckable(True)
-        self.mute_btn.setIcon(QIcon("icons/volume.svg"))
+
+        volume_icon_path = resource_path(os.path.join("icons", "volume.svg"))
+        self.mute_btn.setIcon(QIcon(volume_icon_path))
         self.mute_btn.setIconSize(QSize(24, 24))
         self.mute_btn.setStyleSheet("background: transparent; border: none;")
         self.mute_btn.clicked.connect(self.toggle_mute)
@@ -246,7 +255,7 @@ class VideoPlayer(QWidget):
         self.volume_slider.setValue(20)
         self.volume_slider.valueChanged.connect(lambda v: self.audio.setVolume(v / 100))
         self.volume_slider.setFixedWidth(100)
-        self.progress.setFixedHeight(12)
+        self.volume_slider.setFixedHeight(16)
 
         self.orientation_label = QLabel("Orientation:")
         self.orientation_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -282,7 +291,7 @@ class VideoPlayer(QWidget):
         
         self.max_len_delay_timer = QTimer()
         self.max_len_delay_timer.setSingleShot(True)
-        self.max_len_delay_timer.setInterval(1000)  # 1 second delay
+        self.max_len_delay_timer.setInterval(1000)  # 1 sec delay
         self.max_len_delay_timer.timeout.connect(self.start_auto_max_length_timer)
 
         self.max_len_auto_timer = QTimer()
@@ -446,9 +455,9 @@ class VideoPlayer(QWidget):
             
     def update_loop_button_style(self):
         if self.loop_enabled:
-            self.loop_btn.setIcon(QIcon("icons/loop.svg"))
+            self.loop_btn.setIcon(QIcon(resource_path(os.path.join("icons", "loop.svg"))))
         else:
-            self.loop_btn.setIcon(QIcon("icons/loop-off.svg"))
+            self.loop_btn.setIcon(QIcon(resource_path(os.path.join("icons", "loop-off.svg"))))
 
     def toggle_mute(self):
         new_state = not self.audio.isMuted()
@@ -457,9 +466,9 @@ class VideoPlayer(QWidget):
         
     def update_mute_button_style(self):
         if self.audio.isMuted():
-            self.mute_btn.setIcon(QIcon("icons/volume-off.svg"))
+            self.mute_btn.setIcon(QIcon(resource_path(os.path.join("icons", "volume-off.svg"))))
         else:
-            self.mute_btn.setIcon(QIcon("icons/volume.svg"))
+            self.mute_btn.setIcon(QIcon(resource_path(os.path.join("icons", "volume.svg"))))
 
     def on_orientation_changed(self, text):
         self.pending_orientation = text

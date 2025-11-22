@@ -1,6 +1,6 @@
 # Auto Video Player
 ## Features to implement:
-	1. Right click the video for a context menu with all options currently displayed in the bottom menu except the progress bar.
+	1. Right click the video for a context menu with all options currently displayed in the bottom menu except the progress bar
 		1. Control bar:
 			1. Progress bar
 			2. Loop toggle
@@ -26,4 +26,5 @@
 	3. Default folders to open when selecting a folder and for when copying to.
 	4. Ability to modify tags on the current video
 	5. Add current file name to the window title
+	6. Next/previous video transition should be seamless, there should be no black frames during the transition
 			

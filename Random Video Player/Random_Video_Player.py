@@ -4,20 +4,26 @@ import random
 import subprocess
 import platform
 import cv2
-from PyQt6.QtCore import Qt, QUrl, QSettings, pyqtSignal, QTimer, QEvent, QSize
+from PyQt6.QtCore import Qt, QUrl, QSettings, pyqtSignal, QTimer, QEvent, QSize, QSizeF, QRectF
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QStyle,
-    QPushButton, QSlider, QLabel, QComboBox, QFileDialog, QLineEdit, QFrame
+    QPushButton, QSlider, QLabel, QComboBox, QFileDialog, QLineEdit, QFrame,
+    QGraphicsView, QGraphicsScene, QMenu, QGraphicsOpacityEffect
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
-from PyQt6.QtGui import QIcon
+from PyQt6.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
+from PyQt6.QtGui import QIcon, QAction
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and PyInstaller """
     if hasattr(sys, "_MEIPASS"):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
+
+class NoScrollGraphicsView(QGraphicsView):
+    def wheelEvent(self, event):
+        # Disable mouse wheel scrolling completely
+        return
 
 # --------------------------
 # Clickable Video Frame
@@ -109,9 +115,8 @@ class ClickableVideoFrame(QFrame):
                 return
 
         # ==================== RIGHT CLICK ====================
-        if event.button() == Qt.MouseButton.RightButton:
-            self.parent().toggle_fullscreen()
-
+        #if event.button() == Qt.MouseButton.RightButton:
+            #self.parent().toggle_fullscreen()
 
     # === Timer fired: single click delay expired ===
     def _emit_delayed_single(self):
@@ -147,18 +152,38 @@ class VideoPlayer(QWidget):
         super().__init__()
 
         self.setWindowTitle("Random Video Player")
-        self.setStyleSheet("background-color: #222; color: white;")
+        #self.setStyleSheet("background-color: #222; color: white;")
         self.resize(800, 1100)
 
         self.settings = QSettings("RandomVideoPlayer", "Settings")
 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Graphics scene and view
+        self.scene = QGraphicsScene()
+        self.view = NoScrollGraphicsView(self.scene, self)
+        self.view.setParent(self)
+        layout.addWidget(self.view)
+
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Video item
+        self.video_item = QGraphicsVideoItem()
+        self.video_item.setSize(QSizeF(self.width(), self.height()))
+        self.scene.addItem(self.video_item)
+
         # Media Player
-        self.player = QMediaPlayer()
-        self.audio = QAudioOutput()
-        self.player.setAudioOutput(self.audio)
+        self.mediaPlayer = QMediaPlayer()
+        self.audioOutput = QAudioOutput()
+        self.mediaPlayer.setAudioOutput(self.audioOutput)
+        self.mediaPlayer.setVideoOutput(self.video_item)
 
         # Clickable Video Frame + Video Widget
-        self.video_widget = QVideoWidget()
         self.video_frame = ClickableVideoFrame()
         self.video_frame.setStyleSheet("background-color: black;")
         self.video_frame.clickedLeft.connect(self.previous_video)
@@ -168,11 +193,7 @@ class VideoPlayer(QWidget):
         self.video_frame.clickedBottom.connect(self.toggle_controls_visibility)
         self.video_frame.doubleClickedMiddle.connect(self.toggle_fullscreen)
 
-        video_layout = QVBoxLayout()
-        video_layout.setContentsMargins(0, 0, 0, 0)
-        video_layout.addWidget(self.video_widget)
-        self.video_frame.setLayout(video_layout)
-        self.player.setVideoOutput(self.video_widget)
+        self.video_frame.setLayout(layout)
 
         # Progress bar + time
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
@@ -186,51 +207,79 @@ class VideoPlayer(QWidget):
         progress_layout.addWidget(self.progress)
         progress_layout.addWidget(self.time_label)
 
+        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
+        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
+
         # Controls
         self.button_style = """
-        QPushButton {
-            background-color: #444;   /* slightly lighter than main background */
-            color: white;
-            border: 1px solid #555;
-            border-radius: 3px;
-            padding: 3px 6px;
-        }
-        QPushButton:pressed {
-            background-color: #666;
-        }
+            QPushButton {
+                background-color: #333;   /* slightly lighter than main background */
+                color: white;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 3px 6px;
+            }
+            QPushButton:pressed {
+                background-color: #555;
+            }
         """
         
         self.button_style_selected = """
-        QPushButton {
-            background-color: #666;     /* lighter so it stands out */
-            color: white;
-            border: 1px solid #aaa;     /* clear active indicator */
-            border-radius: 3px;
-            padding: 3px 6px;
-        }
+            QPushButton {
+                background-color: #555;     /* lighter so it stands out */
+                color: white;
+                border: 1px solid #aaa;     /* clear active indicator */
+                border-radius: 3px;
+                padding: 3px 6px;
+            }
         """
         
-        dropdown_style = """
-        QComboBox {
-            background-color: #444;
-            color: white;
-            border: 1px solid #555;
-            border-radius: 3px;
-            padding: 3px 6px;
-        }
-        QComboBox::drop-down {
-            border: none;
-        }
-        QComboBox QAbstractItemView {
-            background-color: #444;
-            color: white;
-            selection-background-color: #666;
-        }
+        self.dropdown_style = """
+            QComboBox {
+                background-color: #333;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 3px;
+                padding: 3px 6px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #444;
+                color: white;
+                selection-background-color: #666;
+            }
         """
 
-        self.select_folder_btn = QPushButton("Select Folder")
-        self.select_folder_btn.setStyleSheet(self.button_style)
-        self.select_folder_btn.clicked.connect(self.select_folder)
+        self.menu_style = f"""
+            QMenu {{
+                background-color: #222;
+                border: 1px solid #444;
+                border-radius: 4px;
+                color: white;
+            }}
+            QMenu::item {{
+                border-radius: 4px;
+                padding: 2px 15px 2px 5px;
+                margin: 3px;
+            }}
+            QMenu::item:selected {{
+                background-color: #333;
+                border-radius: 3px;
+                margin: 3px;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: #444;
+                margin-left: 4px;
+                margin-right: 4px;
+            }}
+            QMenu::indicator {{
+                width: 0px;
+                height: 0px;
+            }}
+        """
 
         self.loop_btn = QPushButton()
         self.loop_btn.setCheckable(True)
@@ -243,7 +292,6 @@ class VideoPlayer(QWidget):
 
         self.mute_btn = QPushButton()
         self.mute_btn.setCheckable(True)
-
         volume_icon_path = resource_path(os.path.join("icons", "volume.svg"))
         self.mute_btn.setIcon(QIcon(volume_icon_path))
         self.mute_btn.setIconSize(QSize(24, 24))
@@ -253,7 +301,7 @@ class VideoPlayer(QWidget):
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(20)
-        self.volume_slider.valueChanged.connect(lambda v: self.audio.setVolume(v / 100))
+        self.volume_slider.valueChanged.connect(lambda v: self.audioOutput.setVolume(v / 100))
         self.volume_slider.setFixedWidth(100)
         self.volume_slider.setFixedHeight(16)
 
@@ -262,7 +310,7 @@ class VideoPlayer(QWidget):
         self.orientation_dropdown = QComboBox()
         self.orientation_dropdown.addItems(["Vertical", "Horizontal", "Both"])
         self.orientation_dropdown.setCurrentText("Vertical")
-        self.orientation_dropdown.setStyleSheet(dropdown_style)
+        self.orientation_dropdown.setStyleSheet(self.dropdown_style)
         self.orientation_dropdown.currentTextChanged.connect(self.on_orientation_changed)
 
         self.max_length_label = QLabel("Max Length:")
@@ -280,14 +328,6 @@ class VideoPlayer(QWidget):
         self.max_len_inc_btn = QPushButton("+")
         self.max_len_inc_btn.setFixedWidth(25)
         self.max_len_inc_btn.setStyleSheet(self.button_style)
-
-        self.explorer_btn = QPushButton("Open in Explorer")
-        self.explorer_btn.setStyleSheet(self.button_style)
-        self.explorer_btn.clicked.connect(self.open_in_explorer)
-
-        self.copy_to_btn = QPushButton("Copy To...")
-        self.copy_to_btn.setStyleSheet(self.button_style)
-        self.copy_to_btn.clicked.connect(self.copy_current_video_to)
         
         self.max_len_delay_timer = QTimer()
         self.max_len_delay_timer.setSingleShot(True)
@@ -316,31 +356,29 @@ class VideoPlayer(QWidget):
         controls_layout.addWidget(self.max_len_dec_btn)
         controls_layout.addWidget(self.max_len_input)
         controls_layout.addWidget(self.max_len_inc_btn)
-        controls_layout.addWidget(self.select_folder_btn)
-        controls_layout.addWidget(self.explorer_btn)
-        controls_layout.addWidget(self.copy_to_btn)
 
         # Controls container for show/hide
         self.controls_container = QWidget()
         controls_container_layout = QVBoxLayout()
-        controls_container_layout.setContentsMargins(0,0,0,0)
+        controls_container_layout.setContentsMargins(4,0,4,4)
         controls_container_layout.setSpacing(0)
         controls_container_layout.addLayout(progress_layout)
         controls_container_layout.addLayout(controls_layout)
         self.controls_container.setLayout(controls_container_layout)
+        self.controls_container.raise_()
 
         # Main Layout
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        main_layout.addWidget(self.video_frame, stretch=1)
+        main_layout.addWidget(self.video_frame)
         main_layout.addWidget(self.controls_container)
         self.setLayout(main_layout)
 
         # Player Events
-        self.player.positionChanged.connect(self.update_progress)
-        self.player.durationChanged.connect(self.update_duration)
-        self.player.mediaStatusChanged.connect(self.media_finished)
+        self.mediaPlayer.positionChanged.connect(self.update_progress)
+        self.mediaPlayer.durationChanged.connect(self.update_duration)
+        self.mediaPlayer.mediaStatusChanged.connect(self.media_finished)
 
         # Video Data
         self.video_list = []
@@ -361,9 +399,59 @@ class VideoPlayer(QWidget):
             self.play_random_video()
         else:
             self.select_folder()
+        
+        self.mute_action = QAction("Mute", self)
+        self.mute_action.setCheckable(True)
+        #self.mute_action.setChecked(False)
+        self.mute_action.toggled.connect(self.toggle_mute)
+        self.mute_action.toggled.connect(self.update_mute_check_icon)
+
+        self.loop_action = QAction("Loop", self)
+        self.loop_action.setCheckable(True)
+        #self.loop_action.setChecked(False)
+        self.loop_action.toggled.connect(self.toggle_loop)
+        self.loop_action.toggled.connect(self.update_loop_check_icon)
 
         self.update_mute_button_style()
-        self.update_loop_button_style()
+        self.update_loop_button_style() 
+        self.update_mute_check_icon(False)
+        self.update_loop_check_icon(False)
+
+        self.select_action = QAction("Select Folder")
+        self.select_action.triggered.connect(self.select_folder)
+
+        self.open_action = QAction("Open in Explorer")
+        self.open_action.triggered.connect(self.open_in_explorer)
+
+        self.copy_action = QAction("Copy to...")
+        self.copy_action.triggered.connect(self.copy_current_video_to)
+
+        #self.defaults_action = QAction("Configure Defaults")
+        #self.defaults_action.changed.connect(self.defaults_page) # Need a defaults window that saves values to settings
+    
+    def update_mute_check_icon(self, checked):
+        self.mute_action.setIcon(
+            self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
+
+    def update_loop_check_icon(self, checked):
+        self.loop_action.setIcon(
+            self.check_box_unfilled_icon if checked else self.check_box_filled_icon)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet(self.menu_style)
+
+        menu.addAction(self.mute_action)
+        menu.addAction(self.loop_action)
+        menu.addSeparator()
+        menu.addAction(self.select_action)
+        menu.addAction(self.open_action)
+        menu.addAction(self.copy_action)
+        menu.addSeparator()
+        #menu.addAction(self.defaults_action)  # Open a window where defaults can be configured
+                                               # Defuault Folders, max length, loop, mute, orientation, window size
+
+        menu.exec(event.globalPos())
 
     # --- Video / Folder Methods ---
     def select_folder(self):
@@ -410,14 +498,14 @@ class VideoPlayer(QWidget):
             return
         index = random.randint(0, len(self.video_list) - 1)
         self.load_video(index)
-        self.player.play()
+        self.mediaPlayer.play()
 
     def load_video(self, index):
         self.current_index = index
         path = self.video_list[index]
         self.current_video_path = path
         url = QUrl.fromLocalFile(path)
-        self.player.setSource(url)
+        self.mediaPlayer.setSource(url)
 
     # --- Controls ---
     def next_video(self):
@@ -429,29 +517,29 @@ class VideoPlayer(QWidget):
             return
         self.current_index = (self.current_index + 1) % len(self.video_list)
         self.load_video(self.current_index)
-        self.player.play()
+        self.mediaPlayer.play()
 
     def previous_video(self):
         if not self.video_list:
             return
         self.current_index = (self.current_index - 1) % len(self.video_list)
         self.load_video(self.current_index)
-        self.player.play()
+        self.mediaPlayer.play()
 
     def toggle_play_pause(self):
-        if self.player.isPlaying():
-            self.player.pause()
+        if self.mediaPlayer.isPlaying():
+            self.mediaPlayer.pause()
         else:
-            self.player.play()
+            self.mediaPlayer.play()
 
     def toggle_loop(self):
         self.loop_enabled = not self.loop_enabled
         self.loop_btn.setChecked(self.loop_enabled)
         self.update_loop_button_style()
         if self.loop_enabled:
-            self.player.setLoops(QMediaPlayer.Loops.Infinite)
+            self.mediaPlayer.setLoops(QMediaPlayer.Loops.Infinite)
         else:
-            self.player.setLoops(QMediaPlayer.Loops(1))
+            self.mediaPlayer.setLoops(QMediaPlayer.Loops(1))
             
     def update_loop_button_style(self):
         if self.loop_enabled:
@@ -460,12 +548,12 @@ class VideoPlayer(QWidget):
             self.loop_btn.setIcon(QIcon(resource_path(os.path.join("icons", "loop-off.svg"))))
 
     def toggle_mute(self):
-        new_state = not self.audio.isMuted()
-        self.audio.setMuted(new_state)
+        new_state = not self.audioOutput.isMuted()
+        self.audioOutput.setMuted(new_state)
         self.update_mute_button_style()
         
     def update_mute_button_style(self):
-        if self.audio.isMuted():
+        if self.audioOutput.isMuted():
             self.mute_btn.setIcon(QIcon(resource_path(os.path.join("icons", "volume-off.svg"))))
         else:
             self.mute_btn.setIcon(QIcon(resource_path(os.path.join("icons", "volume.svg"))))
@@ -486,7 +574,7 @@ class VideoPlayer(QWidget):
     def seek_video(self):
         if self.duration_ms > 0:
             pct = self.progress.value() / 1000
-            self.player.setPosition(int(self.duration_ms * pct))
+            self.mediaPlayer.setPosition(int(self.duration_ms * pct))
 
     def format_time(self, ms):
         sec = ms // 1000
@@ -498,8 +586,8 @@ class VideoPlayer(QWidget):
         from PyQt6.QtMultimedia import QMediaPlayer
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             if self.loop_enabled:
-                self.player.setPosition(0)
-                QTimer.singleShot(50, self.player.play)
+                self.mediaPlayer.setPosition(0)
+                QTimer.singleShot(50, self.mediaPlayer.play)
             else:
                 self.next_video()
 
@@ -555,6 +643,7 @@ class VideoPlayer(QWidget):
             self.controls_container.hide()
         else:
             self.controls_container.show()
+            self.controls_container.raise_()
         
     def start_max_len_hold(self, direction):
         self._max_len_change_direction = direction
@@ -578,6 +667,13 @@ class VideoPlayer(QWidget):
     def change_max_length(self, direction):
         new_value = self.max_length_value + (10 * direction)
         self.set_max_length(new_value)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w, h = self.width(), self.height()
+        self.video_item.setSize(QSizeF(w, h))
+        self.scene.setSceneRect(QRectF(0, 0, w, h))
+        self.controls_container.raise_()
         
     def copy_current_video_to(self):
         """
@@ -644,7 +740,7 @@ class VideoPlayer(QWidget):
 if __name__ == "__main__":
     # Best-effort hide/close any console created by python.exe on Windows.
     # This will hide the console even when the script is launched with python.exe.
-    if sys.platform == "win32":
+    """if sys.platform == "win32":
         try:
             import ctypes
             kernel32 = ctypes.windll.kernel32
@@ -655,7 +751,7 @@ if __name__ == "__main__":
                 user32.ShowWindow(hwnd, SW_HIDE)   # hide console window
                 kernel32.FreeConsole()             # detach from console
         except Exception:
-            pass
+            pass"""
 
     app = QApplication(sys.argv)
     player = VideoPlayer()

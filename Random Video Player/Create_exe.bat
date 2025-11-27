@@ -1,3 +1,3 @@
-pyinstaller --onefile --add-data "C:\Users\Michael\source\repos\Random Video Player\Random Video Player\icons;icons" "Random_Video_Player.py"
+pyinstaller --onefile --add-data "C:\Users\Michael\source\repos\Random Video Player\Random Video Player\icons;icons"  --add-data "C:\Users\Michael\source\repos\Random Video Player\Random Video Player\styles.qss;." "Random_Video_Player.py"
 copy "C:\Users\Michael\source\repos\Random Video Player\Random Video Player\dist\Random_Video_Player.exe" "C:\Users\Michael\Desktop\Random_Video_Player.exe"
 pause

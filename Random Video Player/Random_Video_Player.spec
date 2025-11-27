@@ -5,7 +5,7 @@ a = Analysis(
     ['Random_Video_Player.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\Michael\\source\\repos\\Random Video Player\\Random Video Player\\icons', 'icons')],
+    datas=[('C:\\Users\\Michael\\source\\repos\\Random Video Player\\Random Video Player\\icons', 'icons'), ('C:\\Users\\Michael\\source\\repos\\Random Video Player\\Random Video Player\\styles.qss', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

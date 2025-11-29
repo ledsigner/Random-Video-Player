@@ -1,109 +1,131 @@
 QSlider {
-	margin-left: 5px;
+	margin: 0px 5px;
 }
-
 QSlider::groove:horizontal {
 	height: 4px;
 	background: #333;
 	border: 1px solid #444;
 }
-
-QSlider::sub-page:horizontal { 
+QSlider::sub-page:horizontal#not-minimum { 
 	background: #3a8dde;
+}
+QSlider::sub-page:horizontal#minimum { 
+	background: transparent;
+}
+
+QLabel {
+	color: white;
+}
+QLabel#time_label {
+	color: white;
+	margin-left: 3px;
 }
 
 QPushButton {
-    background-color: #333;
-    border: 1px solid #444;
-    border-radius: 3px;
-    padding: 3px 6px;
+	background-color: #333;
+	color: white;
+	border: 1px solid #444;
+	border-radius: 3px;
+	padding: 3px 6px;
 	text-align: center;
 }
 QPushButton:pressed {
-    background-color: #555;
+	background-color: #555;
+	color: white;
 }
-
 QPushButton#max_len {
-    background-color: #333;
-    border: 1px solid #444;
-    border-radius: 3px;
+	background-color: #333;
+	border: 1px solid #444;
+	border-radius: 3px;
 	text-align: center;
 	font-size: 6px;
+	color: white;
 }
-
 QPushButton#max_len:pressed {
-    background-color: #555;
+	background-color: #555;
 }
-
 QPushButton#playOptions {
 	background-color: Transparent;
-    border: Transparent;
-    border-radius: 0px;
-	align
+	border: Transparent;
+	border-radius: 0px;
 }
 
 QLineEdit{
 	background-color: #333;
 	border: 1px solid #444;
-    border-radius: 3px;
+	border-radius: 3px;
 	text-align: center;	
 	padding: 3px 1px;
+	color: white;
 }
 
 /*** DROPDOWN ***/
 QComboBox {
-    background-color: #333;
-    border: 1px solid #444;
-    border-radius: 3px;
-    padding: 3px 6px;
+	background-color: #333;
+	border: 1px solid #444;
+	border-radius: 3px;
+	padding: 3px 6px;
+	color: white;
 }
 QComboBox::drop-down {
-    background-color: #333;
-    border: None;
-    padding: 3px 6px;
+	background-color: #333;
+	border: None;
+	padding: 3px 6px;
 }
+
 QComboBox QAbstractItemView {
-    background-color: #333;
-    border: 1px solid #444;
-    border-radius: 4px;
-    padding: 3px;
+	background-color: #333;
+	border: 1px solid #444;
+	border-radius: 4px;
+	padding: 3px;
 }
 QComboBox QAbstractItemView:focus {
-    outline: none;
+	outline: none;
 }
 QComboBox QAbstractItemView::item {
-    background-color: #333;
-    padding: 3px;
+	background-color: #333;
+	padding: 3px;
 }
 QComboBox QAbstractItemView::item:hover {
-    background-color: #444;
-    border-radius: 3px;
-    border-color: #555;
+	background-color: #444;
+	border-radius: 3px;
+	border-color: #555;
 }
 
 /*** MENU ***/
 QMenu {
-    background-color: #222;
-    border: 1px solid #444;
-    border-radius: 4px;
-    color: white;
-    icon-size: 13px;
-    padding: 3px;
+	background-color: #222;
+	border: 1px solid #444;
+	border-radius: 4px;
+	color: white;
+	icon-size: 13px;
+	padding: 3px;
 }
 QMenu::item {
-    border-radius: 3px;
-    padding: 3px 30px 3px 5px;
-    margin: 0px;
+	border-radius: 3px;
+	padding: 3px 30px 3px 5px;
+	margin: 0px;
 }
 QMenu::item:selected {
-    background-color: #333;
+	background-color: #333;
 }
 QMenu::separator {
-    height: 1px;
-    background-color: #444;
-    margin: 3px 4px;
+	height: 1px;
+	background-color: #444;
+	margin: 3px 4px;
 }
 QMenu::icon {
-    margin-left: 8px;
-    size: 13px 13px;
+	margin-left: 8px;
+	size: 13px 13px;
+}
+
+QProgressBar {
+	background-color: #333;
+	color: white;
+	border: 1px solid #555;
+	border-radius: 3px;
+	text-align: center;
+}
+QProgressBar::chunk {
+	background-color: #3a8dde;
 }

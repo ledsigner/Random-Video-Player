@@ -1,24 +1,16 @@
-﻿import sys
-import os
-import random
-import subprocess
-import platform
-import shutil
-import math
+﻿import sys, os, random, subprocess, platform, shutil, math, cv2, json, time
 from colorama import Fore, Back, Style
 from pathlib import Path
-import cv2
-import json
-import time
 from PyQt6.QtCore import (Qt, QUrl, QSettings, pyqtSignal, QTimer, QEvent,
     QSize, QSizeF, QRectF, QThread)
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+from PyQt6.QtWidgets import (QApplication, QStackedLayout, QWidget, QVBoxLayout, QHBoxLayout,
     QStyle, QPushButton, QSlider, QLabel, QComboBox, QFileDialog, QLineEdit, 
     QFrame, QGraphicsView, QGraphicsScene, QMenu, QGraphicsOpacityEffect, 
     QProgressBar, QWidgetAction, QSpacerItem, QSizePolicy)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
-from PyQt6.QtGui import QIcon, QAction, QFont, QPaintEvent, QPainter
+from PyQt6.QtGui import (QGuiApplication, QIcon, QAction, QFont, QPaintEvent, 
+    QPainter, QPainterPath, QRegion)
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and PyInstaller """
@@ -50,7 +42,7 @@ class VideoScanner(QThread):
     import json
     
     scanned = pyqtSignal(list)
-    progress = pyqtSignal(int, int) # scanned_count, total_count
+    scanned_progress = pyqtSignal(int, int) # scanned_count, total_count
 
     def __init__(self, folder, orientation, max_length, force_reload=False):
         super().__init__()
@@ -84,7 +76,7 @@ class VideoScanner(QThread):
                 if file.lower().endswith(video_extensions):
                     full = normalize_path(os.path.join(root, file))
                     scanned_count += 1
-                    self.progress.emit(scanned_count, total_videos)  # update progress
+                    self.scanned_progress.emit(scanned_count, total_videos)  # update progress
 
                     #Add functionality: If a different folder is selected or reload is selected, stop the current scan
 
@@ -103,8 +95,10 @@ class VideoScanner(QThread):
                     if self.orientation != "Both" and info["orientation"] != self.orientation:
                         continue
 
-                    # Skip if too long
-                    if info["duration"] > self.max_length:
+                    # If there is no max length, allow all lengths. if there is a max length, skip if video is longer
+                    if self.max_length == 0:
+                        pass
+                    elif info["duration"] > self.max_length:
                         continue
 
                     videos.append(full)
@@ -145,6 +139,38 @@ class VideoScanner(QThread):
             return "Vertical"
         return "Both"
 
+class LoadingOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Tool| Qt.WindowType.FramelessWindowHint)
+
+        # This overlay is a child of VideoPlayer → stays inside window
+        #self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background-color: rgba(34, 34, 34, 160);")
+
+        # Progress bar centered
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.loading_progress_bar = QProgressBar()
+        self.loading_progress_bar.setMinimum(0)
+        self.loading_progress_bar.setMaximum(100)
+        self.loading_progress_bar.setTextVisible(True)
+        self.loading_progress_bar.setFixedWidth(200)
+        self.loading_progress_bar.setStyleSheet(stylesheet)
+
+        self.layout.addWidget(self.loading_progress_bar)
+
+        self.hide()
+
+    # ---------------------------
+    # Public API
+    # ---------------------------
+
+    def update_loading_progress(self, scanned, total):
+        self.loading_progress_bar.setMaximum(total)
+        self.loading_progress_bar.setValue(scanned)
+
 class ControlsOverlay(QWidget):
     """
     A separate, frameless, and always-on-top window for media controls.
@@ -157,19 +183,16 @@ class ControlsOverlay(QWidget):
             Qt.WindowType.FramelessWindowHint |    # No border or title bar
             Qt.WindowType.Tool                  # Doesn't appear in the taskbar/switch list
         )
-        
-        # Set a consistent background/style for the overlay window
-        self.setStyleSheet("background-color: #222; border-radius: 3px;")
-        
+
+        self.setStyleSheet("background-color: #222;")
+
         # Initialize control elements (moved from VideoPlayer.__init__)
         # --- Icons (assuming they are still available in the global scope) ---
-        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
-        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
         self.loop_off_icon = resource_path(os.path.join("icons", "loop-off.svg"))
         self.loop_on_icon = resource_path(os.path.join("icons", "loop.svg"))
         self.volume_on_icon = resource_path(os.path.join("icons", "volume.svg"))
         self.volume_off_icon = resource_path(os.path.join("icons", "volume-off.svg"))
-        
+
         # --- Widgets ---
         self.loop_btn = QPushButton()
         self.loop_btn.setObjectName("playOptions")
@@ -177,6 +200,7 @@ class ControlsOverlay(QWidget):
         self.loop_btn.setIcon(QIcon(self.loop_off_icon))
         self.loop_btn.setIconSize(QSize(22, 22))
         self.loop_btn.setStyleSheet(stylesheet)
+        self.loop_enabled = False
 
         self.mute_btn = QPushButton()
         self.mute_btn.setObjectName("playOptions")
@@ -186,29 +210,36 @@ class ControlsOverlay(QWidget):
         self.mute_btn.setStyleSheet(stylesheet)
 
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setObjectName("not-minimum")
         self.volume_slider.setStyleSheet(stylesheet)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setFixedWidth(100)
         self.volume_slider.setFixedHeight(15)
+        self.volume_slider.valueChanged.connect(self.update_volume_slider_visibility)
         self.volume_slider_stored = 50 # Default value
 
         self.orientation_label = QLabel("Orientation:")
+        self.orientation_label.setStyleSheet(stylesheet)
         self.orientation_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.orientation_dropdown = QComboBox()
         self.orientation_dropdown.addItems(["Vertical", "Horizontal", "Both"])
         self.orientation_dropdown.setCurrentText("Vertical")
         self.orientation_dropdown.setStyleSheet(stylesheet)
+        self.orientation_dropdown.currentTextChanged.connect(self.on_orientation_changed)
+        self.current_orientation = self.orientation_dropdown.currentText()
+        self.pending_orientation = self.current_orientation
 
         self.max_length_label = QLabel("Max Length:")
+        self.max_length_label.setStyleSheet(stylesheet)
         self.max_length_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
+
         self.max_len_dec_btn = QPushButton("▼")
         self.max_len_dec_btn.setObjectName("max_len")
         self.max_len_dec_btn.setFixedWidth(25)
         self.max_len_dec_btn.setFixedHeight(12)
         self.max_len_dec_btn.setStyleSheet(stylesheet)
 
-        self.max_len_input = QLineEdit("00:30")
+        self.max_len_input = QLineEdit("None")
         self.max_len_input.setFixedWidth(35)
         self.max_len_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.max_len_input.setStyleSheet(stylesheet)
@@ -217,27 +248,49 @@ class ControlsOverlay(QWidget):
         self.max_len_inc_btn.setObjectName("max_len")
         self.max_len_inc_btn.setFixedWidth(25)
         self.max_len_inc_btn.setFixedHeight(12)
-        self.max_len_inc_btn.setStyleSheet(stylesheet)       
-        
+        self.max_len_inc_btn.setStyleSheet(stylesheet)   
+
+        self.max_len_delay_timer = QTimer()
+        self.max_len_delay_timer.setSingleShot(True)
+        self.max_len_delay_timer.setInterval(1000)  # 1 sec delay
+        self.max_len_delay_timer.timeout.connect(self.start_auto_max_length_timer)
+
+        self.max_len_auto_timer = QTimer()
+        self.max_len_auto_timer.setInterval(150)  # auto-change interval
+        self.max_len_auto_timer.timeout.connect(self._auto_change_max_length)
+        self._max_len_change_direction = 0  # +1 for increment, -1 for decrement
+
+        self.max_len_inc_btn.pressed.connect(lambda: self.start_max_len_hold(1))
+        self.max_len_inc_btn.released.connect(self.stop_max_len_hold)
+        self.max_len_dec_btn.pressed.connect(lambda: self.start_max_len_hold(-1))
+        self.max_len_dec_btn.released.connect(self.stop_max_len_hold)
+
+        self.current_max_length = 0
+        self.pending_max_length = 0
+        self.duration_ms = 0
+
         # Progress bar + time
-        self.progress = ClickableSlider(Qt.Orientation.Horizontal)
-        self.progress.setStyleSheet(stylesheet)
-        self.progress.setRange(0, 1000)
-        self.progress.setFixedHeight(12)
+        self.progress_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.progress_slider.setObjectName("minimum")
+        self.progress_slider.setStyleSheet(stylesheet)
+        self.progress_slider.setRange(0, 1000)
+        self.progress_slider.setFixedHeight(12)
+        self.progress_slider.valueChanged.connect(self.update_progress_slider_visibility)
 
         self.time_label = QLabel("00:00 / 00:00")
-        self.time_label.setStyleSheet("margin-left: 3px;")
-        
+        self.max_len_inc_btn.setObjectName("time_label")
+        self.time_label.setStyleSheet(stylesheet)
+
         #----------------------------
         # Setup the layout
         #----------------------------
-                
+
         # Layot for increment and decrement max length buttons
         max_len_btn_layout = QVBoxLayout()
         max_len_btn_layout.setSpacing(1)
         max_len_btn_layout.addWidget(self.max_len_inc_btn)
         max_len_btn_layout.addWidget(self.max_len_dec_btn)
-        
+
         # Main control buttons layout
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -252,22 +305,119 @@ class ControlsOverlay(QWidget):
         controls_layout.addWidget(self.max_length_label)
         controls_layout.addWidget(self.max_len_input)
         controls_layout.addLayout(max_len_btn_layout)
-        
+
         # Progress bar + time layout
         progress_layout = QHBoxLayout()
         progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.addWidget(self.progress, 1)
+        progress_layout.addWidget(self.progress_slider, 1)
         progress_layout.addWidget(self.time_label)
 
         # Final assembly
-        controls_container_layout = QVBoxLayout(self)
-        controls_container_layout.setContentsMargins(3, 3, 3, 3)
-        controls_container_layout.setSpacing(2)
-        controls_container_layout.addLayout(progress_layout)
-        controls_container_layout.addLayout(controls_layout)
+        self.controls_container = QWidget(self)
+        self.controls_container.setStyleSheet("background-color: #222; border-radius: 3px;")
+        self.controls_container_layout = QVBoxLayout()
+        self.controls_container_layout.setContentsMargins(3, 3, 3, 3)
+        self.controls_container_layout.setSpacing(2)
+        self.controls_container_layout.addLayout(progress_layout)
+        self.controls_container_layout.addLayout(controls_layout)
+        self.controls_container.setLayout(self.controls_container_layout)
+        #self.controls_container.hide() # Start hidden
+
+        overlay_window_layout = QVBoxLayout(self)
+        overlay_window_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_window_layout.addWidget(self.controls_container)
+
+    def update_video_duration(self, dur):        
+        self.duration_ms = dur
+
+    def update_video_progress(self, pos):        
+        if self.duration_ms > 0:
+            val = int(pos / self.duration_ms * 1000)
+            self.progress_slider.setValue(val)
+        self.time_label.setText(f"{self.format_time(pos)} / {self.format_time(self.duration_ms)}")
+
+    def format_time(self, ms):
+        sec = ms // 1000
+        m = sec // 60
+        s = sec % 60
+        return f"{m:02}:{s:02}"
+
+    def set_max_length(self, value):        
+        try:
+            value = max(0, int(value))
+        except:
+            return
+        if value == 0:
+            self.max_len_input.setText("None")
+        else:
+            self.max_len_input.setText(self.format_time(value * 1000))
+        self.pending_max_length = value 
+
+    def manual_max_length_changed(self, text):        
+        if text.isdigit():
+            self.set_max_length(text)
+        elif text.lower() in ["no limit", "nolimit"]:
+            self.set_max_length(0)
+
+    def on_orientation_changed(self, text):        
+        self.pending_orientation = text
         
-        # QTimer logic related to max length must be moved to VideoPlayer if needed
+    def start_max_len_hold(self, direction):        
+        self._max_len_change_direction = direction
+        self.change_max_length(direction)
+        self.max_len_delay_timer.start()
+
+    def start_auto_max_length_timer(self):        
+        self.max_len_auto_timer.start()
+
+    def stop_max_len_hold(self):        
+        self.max_len_delay_timer.stop()
+        self.max_len_auto_timer.stop()
+
+    def _auto_change_max_length(self):        
+        self.change_max_length(self._max_len_change_direction)
+
+    def change_max_length(self, direction):        
+        new_value = self.pending_max_length + (10 * direction)
+        self.set_max_length(new_value)
         
+    def update_mask(self):
+        R = 8
+        #rect = self.rect()
+        W = self.width()
+        H = self.height()
+
+        path = QPainterPath()
+        
+        path.moveTo(0, 0)
+        path.lineTo(W, 0)
+        path.lineTo(W, H - R)
+        path.arcTo(W - 2*R, H - 2*R, 2*R, 2*R, 0, -90)
+        path.lineTo(R, H)
+        path.arcTo(0, H - 2*R, 2*R, 2*R, -90, -90)
+        path.lineTo(0, 0)
+        
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.setMask(region)
+
+    def update_volume_slider_visibility(self, value):
+        if value == self.volume_slider.minimum():
+            self.volume_slider.setObjectName("minimum")
+        else:
+            self.volume_slider.setObjectName("not-minimum")
+        self.volume_slider.setStyleSheet(stylesheet)
+
+    def update_progress_slider_visibility(self, value):
+        if value == self.progress_slider.minimum():
+            self.progress_slider.setObjectName("minimum")
+        else:
+            self.progress_slider.setObjectName("not-minimum")
+        self.progress_slider.setStyleSheet(stylesheet)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_mask()
+
 # You will need to remove the old ClickableVideoFrame class.
 # --- Helper Widget for Click Detection over QVideoWidget ---
 # QVideoWidget often swallows mouse events. This transparent overlay captures them.
@@ -280,8 +430,7 @@ class ClickOverlay(QWidget):
     clickedBottom = pyqtSignal() 
     
     # We'll use a single-click/double-click detector logic similar to the old frame
-    def __init__(self, parent=None):
-        # ... (initialization is unchanged) ...       
+    def __init__(self, parent=None):   
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -321,12 +470,12 @@ class ClickOverlay(QWidget):
         # Use 1/5 (20%) of the height for top/bottom zones
         sixth_h = h / 6 
 
-        # ==================== TOP AREA CLICK (Prioritized for Exit Fullscreen) ====================
+        # ==================== TOP AREA CLICK ====================
         if y < sixth_h:
             self.clickedTop.emit()
             return
             
-        # ==================== BOTTOM AREA CLICK (Prioritized for Controls Toggle) ====================
+        # ==================== BOTTOM AREA CLICK ====================
         if y > h - sixth_h:
             self.clickedBottom.emit()
             return
@@ -385,13 +534,7 @@ class ClickOverlay(QWidget):
     def _reset_double_click(self):
         self._waiting_double = False
         self._waiting_single = False
-      
-    """
-    def paintEvent(self, event: QPaintEvent):
-        # Ensure it is completely transparent
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
-    """
+
 # --------------------------
 # Clickable Slider (Unchanged)
 # --------------------------
@@ -413,17 +556,21 @@ class VideoPlayer(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Random Video Player")
-        self.resize(800, 1100)
+        self.resize(800, 900)
+        self.setMinimumSize(500,450)
         
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("background-color: #222;")
         
         self.settings = QSettings("RandomVideoPlayer", "Settings")
         
-        self.controls = ControlsOverlay()
-        
-        self.controls.hide()
-        self.controls_visible = False 
+        self.controls = ControlsOverlay(self)
+        self.controls.update_mask()
+
+        self.loading = LoadingOverlay(self)
+
+        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
+        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
 
         # --- Main Layout (Vertical Box) ---
         main_layout = QVBoxLayout(self)
@@ -453,151 +600,16 @@ class VideoPlayer(QWidget):
         self.click_overlay.clickedMiddle.connect(self.toggle_play_pause)
         self.click_overlay.clickedTop.connect(self.exit_fullscreen)
         self.click_overlay.clickedBottom.connect(self.toggle_controls_visibility)
-        # We need to manage its geometry in resizeEvent
-
-        # --- Controls Setup (Unchanged content, now an overlay) ---
-        
-        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
-        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
-
-        self.loop_btn = QPushButton()
-        self.loop_btn.setCheckable(True)
-        self.loop_off_icon = resource_path(os.path.join("icons", "loop-off.svg"))
-        self.loop_on_icon = resource_path(os.path.join("icons", "loop.svg"))
-        self.loop_btn.setIcon(QIcon(self.loop_off_icon))
-        self.loop_btn.setIconSize(QSize(24, 24))
-        self.loop_btn.setStyleSheet(stylesheet)
-        self.loop_btn.clicked.connect(self.toggle_loop)
-        self.loop_enabled = False
-
-        self.mute_btn = QPushButton()
-        self.mute_btn.setCheckable(True)
-        self.volume_on_icon = resource_path(os.path.join("icons", "volume.svg"))
-        self.volume_off_icon = resource_path(os.path.join("icons", "volume-off.svg"))
-        self.mute_btn.setIcon(QIcon(self.volume_on_icon))
-        self.mute_btn.setIconSize(QSize(24, 24))
-        self.mute_btn.setStyleSheet(stylesheet)
-        self.mute_btn.clicked.connect(self.toggle_mute)
-
-        self.volume_slider_stored = 50
-        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.valueChanged.connect(self.update_volume)
-        #self.volume_slider.valueChanged.connect(self.update_volume_slider_stylesheet)
-        self.volume_slider.setValue(self.volume_slider_stored)
-        self.volume_slider.setFixedWidth(100)
-        self.volume_slider.setFixedHeight(15)
-
-        self.orientation_label = QLabel("Orientation:")
-        self.orientation_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.orientation_dropdown = QComboBox()
-        self.orientation_dropdown.addItems(["Vertical", "Horizontal", "Both"])
-        self.orientation_dropdown.setCurrentText("Vertical")
-        self.orientation_dropdown.setStyleSheet(stylesheet)
-        self.orientation_dropdown.currentTextChanged.connect(self.on_orientation_changed)
-
-        self.max_length_label = QLabel("Max Length:")
-        self.max_length_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self.max_len_dec_btn = QPushButton("-")
-        self.max_len_dec_btn.setFixedWidth(25)
-        self.max_len_dec_btn.setStyleSheet(stylesheet)
-
-        self.max_len_input = QLineEdit("00:30")
-        self.max_len_input.setFixedWidth(50)
-        self.max_len_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.max_len_input.textChanged.connect(self.manual_max_length_changed)
-
-        self.max_len_inc_btn = QPushButton("+")
-        self.max_len_inc_btn.setFixedWidth(25)
-        self.max_len_inc_btn.setStyleSheet(stylesheet)
-        
-        self.max_len_delay_timer = QTimer()
-        self.max_len_delay_timer.setSingleShot(True)
-        self.max_len_delay_timer.setInterval(1000)  # 1 sec delay
-        self.max_len_delay_timer.timeout.connect(self.start_auto_max_length_timer)
-
-        self.max_len_auto_timer = QTimer()
-        self.max_len_auto_timer.setInterval(150)  # auto-change interval
-        self.max_len_auto_timer.timeout.connect(self._auto_change_max_length)
-        self._max_len_change_direction = 0  # +1 for increment, -1 for decrement
-
-        self.max_len_inc_btn.pressed.connect(lambda: self.start_max_len_hold(1))
-        self.max_len_inc_btn.released.connect(self.stop_max_len_hold)
-        self.max_len_dec_btn.pressed.connect(lambda: self.start_max_len_hold(-1))
-        self.max_len_dec_btn.released.connect(self.stop_max_len_hold)
-
-        # Progress bar + time
-        self.progress = ClickableSlider(Qt.Orientation.Horizontal)
-        self.progress.setRange(0, 1000)
-        self.progress.setFixedHeight(12)
-        self.progress.sliderReleased.connect(self.seek_video)
-        #self.progress.valueChanged.connect(self.update_progress_stylesheet)
-
-        self.time_label = QLabel("00:00 / 00:00")
-        self.time_label.setStyleSheet("margin-left: 3px;")
-        progress_layout = QHBoxLayout()
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.addWidget(self.progress)
-        progress_layout.addWidget(self.time_label)
-
-        controls_layout = QHBoxLayout()
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(5)
-        controls_layout.addWidget(self.loop_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        controls_layout.addWidget(self.mute_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        controls_layout.addWidget(self.volume_slider, alignment=Qt.AlignmentFlag.AlignHCenter)
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.orientation_label)
-        controls_layout.addWidget(self.orientation_dropdown)
-        controls_layout.addWidget(self.max_length_label)
-        controls_layout.addWidget(self.max_len_dec_btn)
-        controls_layout.addWidget(self.max_len_input)
-        controls_layout.addWidget(self.max_len_inc_btn)
-
-        # Controls container for show/hide - now parented to self to be an overlay
-        self.controls_container = QWidget(self)
-        self.controls_container.setStyleSheet("background-color: #222; border-radius: 3px;")
-        controls_container_layout = QVBoxLayout()
-        controls_container_layout.setContentsMargins(4,4,4,4) # Increased top padding slightly
-        controls_container_layout.setSpacing(4)
-        controls_container_layout.addLayout(progress_layout)
-        controls_container_layout.addLayout(controls_layout)
-        self.controls_container.setLayout(controls_container_layout)
-        self.controls_container.hide() # Start hidden
-        
-        # --- Loading Overlay ---
-        self.loading_overlay = QWidget(self)
-        self.loading_overlay.setStyleSheet("background-color: rgba(0,0,0,150);")
-        # Geometry is handled in resizeEvent
-        self.loading_overlay.hide()
-
-        overlay_layout = QVBoxLayout()
-        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.loading_progress_bar = QProgressBar()
-        self.loading_progress_bar.setMinimum(0)
-        self.loading_progress_bar.setMaximum(100)
-        self.loading_progress_bar.setTextVisible(True)
-        self.loading_progress_bar.setFixedWidth(300)
-
-        overlay_layout.addWidget(self.loading_progress_bar)
-        self.loading_overlay.setLayout(overlay_layout)
 
         # --- Player Events & Data (Unchanged) ---
-        self.mediaPlayer.positionChanged.connect(self.update_progress)
-        self.mediaPlayer.durationChanged.connect(self.update_duration)
+        self.mediaPlayer.positionChanged.connect(self.controls.update_video_progress)
+        self.mediaPlayer.durationChanged.connect(self.controls.update_video_duration)
+        self.controls.progress_slider.sliderReleased.connect(self.seek_video)
         self.mediaPlayer.mediaStatusChanged.connect(self.media_finished)
 
         self.video_list = []
         self.current_index = -1
-        self.duration_ms = 0
-        self.current_orientation = self.orientation_dropdown.currentText()
-        self.pending_orientation = self.current_orientation
-        self.current_max_length = 30
-        self.pending_max_length = 30
         self.current_video_path = None
-        self.controls_visible = False # Track controls state
 
         # Auto-load last folder
         last_folder = self.settings.value("last_folder", "D:\\Porn\\Video")
@@ -616,17 +628,36 @@ class VideoPlayer(QWidget):
         self.loop_action.setCheckable(True)
         self.loop_action.toggled.connect(self.toggle_loop)
         self.loop_action.toggled.connect(self.update_loop_check_icon)
+
+        self.auto_play_action = QAction("Auto Play", self)
+        self.auto_play_action.setCheckable(True)
+        self.auto_play_action.toggled.connect(self.toggle_auto_play)
+        self.auto_play_action.toggled.connect(self.update_auto_play_check_icon)
+        self.auto_play_enabled = True
         
         self.fullscreen_action = QAction("Full Screen", self)
         self.fullscreen_action.setCheckable(True)
         self.fullscreen_action.toggled.connect(self.toggle_fullscreen)
         self.fullscreen_action.toggled.connect(self.update_fullscreen_check_icon)
 
+        self.borderless_action = QAction("Borderless", self)
+        self.borderless_action.setCheckable(True)
+        self.borderless_action.toggled.connect(self.toggle_borderless)
+        self.borderless_action.toggled.connect(self.update_borderless_check_icon)
+
+        self.hide_controls_action = QAction("Hide Controls", self)
+        self.hide_controls_action.setCheckable(True)
+        self.hide_controls_action.toggled.connect(self.toggle_controls_visibility)
+        self.hide_controls_action.toggled.connect(self.update_hide_controls_check_icon)
+
         self.update_mute_button_style()
         self.update_loop_button_style() 
         self.update_mute_check_icon(False)
         self.update_loop_check_icon(False)
+        self.update_auto_play_check_icon(False)
         self.update_fullscreen_check_icon(False)
+        self.update_borderless_check_icon(False)
+        self.update_hide_controls_check_icon(False)
 
         self.select_action = QAction("Select Folder")
         self.select_action.triggered.connect(self.select_folder)
@@ -640,43 +671,16 @@ class VideoPlayer(QWidget):
         self.reload_action = QAction("Reload Folder")
         self.reload_action.triggered.connect(self.reload_current_folder)
         
-        # --- Controls Setup (Now Instantiated as an Overlay Window) ---
-        
-        self.current_max_length = 30 # Initialize here, moved from controls setup
-        self.pending_max_length = 30 # Initialize here
-        self.current_orientation = self.controls.orientation_dropdown.currentText()
-        self.pending_orientation = self.current_orientation
-
         # --- Connect Signals from the Controls Overlay to VideoPlayer Methods ---
         self.controls.loop_btn.clicked.connect(self.toggle_loop)
+        #self.controls.auto_play.clicked.connect(self.auto_play)  # Might add a auto play button to the control bar later
         self.controls.mute_btn.clicked.connect(self.toggle_mute)
         self.controls.volume_slider.valueChanged.connect(self.update_volume)
         self.controls.volume_slider.setValue(50) # Set initial value
-        self.controls.orientation_dropdown.currentTextChanged.connect(self.on_orientation_changed)
-
-        # Max Length Control Connections
-        self.max_len_delay_timer = QTimer() # Must be a VideoPlayer member now
-        self.max_len_delay_timer.setSingleShot(True)
-        self.max_len_delay_timer.setInterval(1000)
-        self.max_len_delay_timer.timeout.connect(self.start_auto_max_length_timer)
-
-        self.max_len_auto_timer = QTimer() # Must be a VideoPlayer member now
-        self.max_len_auto_timer.setInterval(150)
-        self.max_len_auto_timer.timeout.connect(self._auto_change_max_length)
-
-        self.controls.max_len_inc_btn.pressed.connect(lambda: self.start_max_len_hold(1))
-        self.controls.max_len_inc_btn.released.connect(self.stop_max_len_hold)
-        self.controls.max_len_dec_btn.pressed.connect(lambda: self.start_max_len_hold(-1))
-        self.controls.max_len_dec_btn.released.connect(self.stop_max_len_hold)
-        self.controls.max_len_input.textChanged.connect(self.manual_max_length_changed)
-
-        # Progress Connections
-        self.mediaPlayer.positionChanged.connect(self.update_progress)
-        self.mediaPlayer.durationChanged.connect(self.update_duration)
-        self.controls.progress.sliderReleased.connect(self.seek_video)
+        self.controls.orientation_dropdown.currentTextChanged.connect(self.controls.on_orientation_changed)
 
         # Call the function to set initial position after the main window is shown.
-        QTimer.singleShot(10, self.update_overlay_position)
+        self.update_overlay_position()
         self.controls.show()
         self.controls_visible = True
     
@@ -703,15 +707,33 @@ class VideoPlayer(QWidget):
         
         geo = self.geometry()  # main window geometry on screen
         
-        controls_height = self.controls.sizeHint().height()
-        x = geo.x()
-        y = geo.y() + geo.height() - controls_height
         w = geo.width()
-        h = controls_height
-        
+        h = self.controls.sizeHint().height()
+        x = geo.x()
+        y = geo.y() + geo.height() - h
+
         self.controls.setGeometry(x, y, w, h)
         self.controls.raise_()
+        self.controls.show()
 
+        if self.loading.isVisible():
+            self.loading.setGeometry(geo.x(), geo.y(), geo.width(), geo.height())
+            self.loading.raise_()
+            self.loading.show()
+
+    def show_loader(self, total=0):
+        if total > 0:
+            self.loading.loading_progress_bar.setMaximum(total)
+        self.loading.loading_progress_bar.setValue(0)
+
+        self.resize(self.size())
+        self.loading.show()
+        self.loading.raise_()
+        self.update_overlay_position()
+
+    def hide_loader(self):
+        self.loading.hide()
+        
     def moveEvent(self, event):
         super().moveEvent(event)
         self.update_overlay_position()
@@ -723,17 +745,25 @@ class VideoPlayer(QWidget):
     def update_loop_check_icon(self, checked):
         self.loop_action.setIcon(
             self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
+
+    def update_auto_play_check_icon(self, checked):
+        self.auto_play_action.setIcon(
+            self.check_box_unfilled_icon if checked else self.check_box_filled_icon)
             
     def update_fullscreen_check_icon(self, checked):
         self.fullscreen_action.setIcon(
             self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
 
-    def show_loader(self):
-        self.loading_progress_bar.setValue(0)
-        self.loading_overlay.show()
-        self.loading_overlay.raise_()
-        
-    def reload_current_folder(self):
+    def update_borderless_check_icon(self, checked):
+        self.borderless_action.setIcon(
+            self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
+
+    def update_hide_controls_check_icon(self, checked):
+        self.hide_controls_action.setIcon(
+            self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
+      
+    # Remove items in the current folder from the cache json and rescan the folder
+    def reload_current_folder(self):  
         if not self.current_folder:
             return
 
@@ -761,7 +791,10 @@ class VideoPlayer(QWidget):
 
         menu.addAction(self.mute_action)
         menu.addAction(self.loop_action)
+        menu.addAction(self.auto_play_action)
         menu.addAction(self.fullscreen_action)
+        menu.addAction(self.borderless_action)
+        menu.addAction(self.hide_controls_action)
         menu.addSeparator()
         menu.addAction(self.select_action)
         menu.addAction(self.open_action)
@@ -778,13 +811,11 @@ class VideoPlayer(QWidget):
             self.settings.setValue("last_folder", folder)
             self.load_folder(folder)
 
-    def hide_loader(self):
-        self.loading_overlay.hide()
-
-    def update_loader_progress(self, scanned_count, total_count):
-        self.loading_progress_bar.setMaximum(total_count)
-        self.loading_progress_bar.setValue(scanned_count)
-        self.loading_progress_bar.setFormat(f"Loading {self.current_folder_name}: %p% (%v/%m)")
+    def update_loader_progress(self, scanned, total):
+        self.loading.update_loading_progress(scanned, total)
+        self.loading.loading_progress_bar.setFormat(
+            f"Loading {self.current_folder_name}: %p% ({scanned}/{total})"
+        )
 
     def scan_folder(self, folder):
         self.loader_timer = QTimer()
@@ -792,9 +823,9 @@ class VideoPlayer(QWidget):
         self.loader_timer.timeout.connect(self.show_loader)
         self.loader_timer.start(1000)
 
-        self.scanner = VideoScanner(folder, self.current_orientation, self.current_max_length, force_reload=False)
+        self.scanner = VideoScanner(folder, self.controls.current_orientation, self.controls.current_max_length, force_reload=False)
         self.scanner.scanned.connect(self.on_scan_complete)
-        self.scanner.progress.connect(self.update_loader_progress)
+        self.scanner.scanned_progress.connect(self.update_loader_progress)
         self.scanner.start()
 
     def load_folder(self, folder):
@@ -814,8 +845,8 @@ class VideoPlayer(QWidget):
         self.play_video()
 
     def load_folder_with_pending_settings(self):
-        self.current_orientation = self.pending_orientation
-        self.current_max_length = self.pending_max_length
+        self.controls.current_orientation = self.controls.pending_orientation
+        self.controls.current_max_length = self.controls.pending_max_length
         last_folder = self.settings.value("last_folder", "")
         if last_folder and os.path.exists(last_folder):
             self.load_folder(last_folder)
@@ -836,22 +867,24 @@ class VideoPlayer(QWidget):
 
     # --- Controls ---
     def next_video(self):
-        if (self.pending_orientation != self.current_orientation or
-            self.pending_max_length != self.current_max_length):
+        if (self.controls.pending_orientation != self.controls.current_orientation or
+            self.controls.pending_max_length != self.controls.current_max_length):
             self.load_folder_with_pending_settings()
             
         if not self.video_list:
             return
         self.current_index = (self.current_index + 1) % len(self.video_list)
         self.load_video(self.current_index)
-        self.mediaPlayer.play()
+        if self.auto_play_enabled:
+            self.mediaPlayer.play()
 
     def previous_video(self):        
         if not self.video_list:
             return
         self.current_index = (self.current_index - 1) % len(self.video_list)
         self.load_video(self.current_index)
-        self.mediaPlayer.play()
+        if self.auto_play_enabled:
+            self.mediaPlayer.play()
 
     def toggle_play_pause(self):
         if self.mediaPlayer.isPlaying():
@@ -860,23 +893,30 @@ class VideoPlayer(QWidget):
             self.mediaPlayer.play()
 
     def toggle_loop(self):
-        self.loop_enabled = not self.loop_enabled
-        self.controls.loop_btn.setChecked(self.loop_enabled)
+        self.controls.loop_enabled = not self.controls.loop_enabled
+        self.controls.loop_btn.setChecked(self.controls.loop_enabled)
         self.update_loop_button_style()
             
     def update_loop_button_style(self):
-        if self.loop_enabled:
-            self.controls.loop_btn.setIcon(QIcon(self.loop_on_icon))
+        if self.controls.loop_enabled:
+            self.controls.loop_btn.setIcon(QIcon(self.controls.loop_on_icon))
+            self.loop_action.setIcon(self.check_box_filled_icon)
         else:
-            self.controls.loop_btn.setIcon(QIcon(self.loop_off_icon))
+            self.controls.loop_btn.setIcon(QIcon(self.controls.loop_off_icon))
+            self.loop_action.setIcon(self.check_box_unfilled_icon)
+
+    def toggle_auto_play(self):
+            self.auto_play_enabled = not self.auto_play_enabled
+            #self.controls.auto_play_btn.setChecked(self.auto_play_enabled)
+            #self.update_auto_play_button_style()
 
     def toggle_mute(self):        
         if self.audioOutput.isMuted():
             self.audioOutput.setMuted(False)
             self.update_mute_button_style(50)
-            self.controls.volume_slider.setValue(self.volume_slider_stored)
+            self.controls.volume_slider.setValue(self.controls.volume_slider_stored)
         else:
-            self.volume_slider_stored = int(self.audioOutput.volume() * 100)
+            self.controls.volume_slider_stored = int(self.audioOutput.volume() * 100)
             self.audioOutput.setMuted(True)
             self.update_mute_button_style(0)
             self.controls.volume_slider.setValue(0)
@@ -892,57 +932,28 @@ class VideoPlayer(QWidget):
         
     def update_mute_button_style(self, volume_current = 50):        
         if self.audioOutput.isMuted() or volume_current == 0:
-            self.controls.mute_btn.setIcon(QIcon(self.volume_off_icon))
+            self.controls.mute_btn.setIcon(QIcon(self.controls.volume_off_icon))
+            self.mute_action.setIcon(self.check_box_filled_icon)
         else:
-            self.controls.mute_btn.setIcon(QIcon(self.volume_on_icon))
-
-    def on_orientation_changed(self, text):        
-        self.pending_orientation = text
-
-    def update_duration(self, dur):        
-        self.duration_ms = dur
-
-    def update_progress(self, pos):        
-        if self.duration_ms > 0:
-            val = int(pos / self.duration_ms * 1000)
-            self.controls.progress.setValue(val)
-        self.controls.time_label.setText(f"{self.format_time(pos)} / {self.format_time(self.duration_ms)}")
+            self.controls.mute_btn.setIcon(QIcon(self.controls.volume_on_icon))
+            self.mute_action.setIcon(self.check_box_unfilled_icon)
 
     def seek_video(self):        
-        if self.duration_ms > 0:
-            pct = self.controls.progress.value() / 1000
-            self.mediaPlayer.setPosition(int(self.duration_ms * pct))
-
-    def format_time(self, ms):        
-        sec = ms // 1000
-        m = sec // 60
-        s = sec % 60
-        return f"{m:02}:{s:02}"
+        if self.controls.duration_ms > 0:
+            pct = self.controls.progress_slider.value() / 1000
+            self.mediaPlayer.setPosition(int(self.controls.duration_ms * pct))
 
     def media_finished(self, status):        
         if status == self.mediaPlayer.MediaStatus.EndOfMedia:
-            if self.loop_enabled:
+            if self.controls.loop_enabled:
                 self.mediaPlayer.setPosition(0)
-                QTimer.singleShot(50, self.mediaPlayer.play)
             else:
                 self.next_video()
 
-    def set_max_length(self, value):        
-        try:
-            value = max(0, int(value))
-        except:
-            return
-        if value == 0:
-            self.controls.max_len_input.setText("N/A")
-        else:
-            self.controls.max_len_input.setText(self.format_time(value * 1000))
-        self.pending_max_length = value 
-
-    def manual_max_length_changed(self, text):        
-        if text.isdigit():
-            self.set_max_length(text)
-        elif text.lower() in ["no limit", "nolimit"]:
-            self.set_max_length(0)
+            if self.auto_play_enabled:
+                QTimer.singleShot(50, self.mediaPlayer.play)
+            else:
+                QTimer.singleShot(50, self.mediaPlayer.pause)
 
     def open_in_explorer(self):        
         if not self.video_list or self.current_index == -1:
@@ -962,10 +973,28 @@ class VideoPlayer(QWidget):
         else:
             self.showFullScreen()
             self.fullscreen_action.setIcon(self.check_box_filled_icon)
-
+    
     def exit_fullscreen(self):        
         if self.isFullScreen():
             self.showNormal()
+
+    def toggle_borderless(self): # Issue: When it goes borderless, the window size changes. But I want the window size to say the same size, but the video player should take up the entire thing including the title bar.
+        if bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint):
+            print(f"\nWithout border Height: {self.height()}")
+            print(f"Without border Width: {self.width()}")
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
+            self.borderless_action.setIcon(self.check_box_unfilled_icon)
+            self.show()
+            print(f"With border Height: {self.height()}")
+            print(f"With border Width: {self.width()}")
+        else:
+            print(f"\nWith border Height: {self.height()}")
+            print(f"With border Width: {self.width()}")
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.borderless_action.setIcon(self.check_box_filled_icon)
+            self.show()
+            print(f"Without border Height: {self.height()}")
+            print(f"Without border Width: {self.width()}")
 
     def toggle_controls_visibility(self):
         if self.controls.isVisible():
@@ -973,41 +1002,30 @@ class VideoPlayer(QWidget):
         else:
             self.controls.show()
             self.update_overlay_position()
-        
-    def start_max_len_hold(self, direction):        
-        self._max_len_change_direction = direction
-        self.change_max_length(direction)
-        self.max_len_delay_timer.start()
-
-    def start_auto_max_length_timer(self):        
-        self.max_len_auto_timer.start()
-
-    def stop_max_len_hold(self):        
-        self.max_len_delay_timer.stop()
-        self.max_len_auto_timer.stop()
-
-    def _auto_change_max_length(self):        
-        self.change_max_length(self._max_len_change_direction)
-
-    def change_max_length(self, direction):        
-        new_value = self.pending_max_length + (10 * direction)
-        self.set_max_length(new_value)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.controls.update_mask()
         w, h = self.width(), self.height()
         
-        self.loading_overlay.setGeometry(0, 0, w, h)
+        geo = self.geometry()
+        self.loading.setGeometry(geo.x(), geo.y(), geo.width(), geo.height())
+        self.click_overlay.setGeometry(0, 0, w, h)
         
         # --- Controls Overlay Sizing ---
-        controls_h = self.controls_container.sizeHint().height()
-        self.controls_container.setGeometry(0, h - controls_h, w, controls_h)
-        self.controls_container.raise_()
+        #controls_h = self.controls.controls_container.sizeHint().height()
+        #self.controls.controls_container.setGeometry(0, h - controls_h, w, controls_h)
+        #self.controls.controls_container.raise_()
         
         # --- Click Overlay Sizing ---
-        self.click_overlay.setGeometry(0, 0, w, h)
-        if not self.loading_overlay.isVisible():
-            self.click_overlay.raise_()
+        self.click_overlay.raise_()
+
+        # controls overlay above click overlay
+        self.controls.raise_()
+
+        # loading overlay highest when visible
+        #if self.loading.isVisible():
+        self.loading.raise_()
             
         self.update_overlay_position()
         

@@ -7,7 +7,7 @@ QSlider::groove:horizontal {
 	border: 1px solid #444;
 }
 QSlider::sub-page:horizontal#not-minimum { 
-	background: #3a8dde;
+	background: white;
 }
 QSlider::sub-page:horizontal#minimum { 
 	background: transparent;

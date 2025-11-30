@@ -1,19 +1,37 @@
-﻿import sys, os, random, subprocess, platform, shutil, math, cv2, json, time
+﻿"""
+This is a simple media player that plays videos from a selected folder (and subfolders) in random
+order. By default, videos will auto play, but this and other configurations can be changed in the
+context menu (right-click anywhere on the video). 
+
+The main window is split into clickable zones for navigation and control:
+    - Center third: Play/Pause (single click), Fullscreen toggle (double click))
+    - Left third: Previous video
+    - Right third: Next video
+    - Top: Exit fullscreen
+    - Bottom: Toggle control bar visibility
+
+The control bar at the bottom of the main window has filters for orientation and max length.
+
+Video info is cached in local app data after the initial scan of a folder for faster subsequent 
+loading times. If a video is modified or a new file is added to a folder, the cache will be 
+updated with the new info.
+"""
+
+import sys, os, random, subprocess, platform, shutil, math, cv2, json, time
 from colorama import Fore, Back, Style
 from pathlib import Path
 from PyQt6.QtCore import (Qt, QUrl, QSettings, pyqtSignal, QTimer, QEvent,
     QSize, QSizeF, QRectF, QThread)
 from PyQt6.QtWidgets import (QApplication, QStackedLayout, QWidget, QVBoxLayout, QHBoxLayout,
     QStyle, QPushButton, QSlider, QLabel, QComboBox, QFileDialog, QLineEdit, 
-    QFrame, QGraphicsView, QGraphicsScene, QMenu, QGraphicsOpacityEffect, 
-    QProgressBar, QWidgetAction, QSpacerItem, QSizePolicy)
+    QFrame, QMenu, QProgressBar, QWidgetAction, QSpacerItem, QSizePolicy, QMainWindow)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtGui import (QGuiApplication, QIcon, QAction, QFont, QPaintEvent, 
-    QPainter, QPainterPath, QRegion)
+    QPainter, QPalette, QPalette, QColor, QPainter)
 
+# To be able to access resources when compiled with PyInstaller
 def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and PyInstaller """
     if hasattr(sys, "_MEIPASS"):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
@@ -31,9 +49,7 @@ def get_cache_path():
         return os.path.join(folder, "media_info_cache.json")
 
 def normalize_path(path: str) -> str:
-    # make absolute
     path = os.path.abspath(path)
-    # normalize slashes and remove redundant segments
     path = os.path.normpath(path)
     return path
 
@@ -76,15 +92,15 @@ class VideoScanner(QThread):
                 if file.lower().endswith(video_extensions):
                     full = normalize_path(os.path.join(root, file))
                     scanned_count += 1
-                    self.scanned_progress.emit(scanned_count, total_videos)  # update progress
+                    self.scanned_progress.emit(scanned_count, total_videos)
 
-                    #Add functionality: If a different folder is selected or reload is selected, stop the current scan
+                    # Add functionality: If a different folder is selected or reload is selected, stop the current scan
 
                     mtime = os.path.getmtime(full)
 
                     info = self.media_info_cache.get(full)
 
-                    #If force reload, it's a new file, or it's been modified → update it in cache
+                    #If force reload was selected or it's a new file or the file has been modified, update it in cache
                     if self.force_reload or info is None or info.get("mtime") != mtime:
                         duration = self.get_video_length(full)
                         orientation = self.detect_orientation(full)
@@ -92,7 +108,7 @@ class VideoScanner(QThread):
                         self.media_info_cache[full] = info
 
                     # Skip if orientation doesn't match
-                    if self.orientation != "Both" and info["orientation"] != self.orientation:
+                    if self.orientation != "All" and info["orientation"] != self.orientation:
                         continue
 
                     # If there is no max length, allow all lengths. if there is a max length, skip if video is longer
@@ -113,8 +129,8 @@ class VideoScanner(QThread):
         endTime = time.time()
         print(Fore.GREEN + "Loading folder duration:" + Style.RESET_ALL, endTime - startTime)
 
+    # Returns video length in seconds using ffprobe.
     def get_video_length(self, path):
-        """Returns video length in seconds using ffprobe."""
         try:
             cmd = [
                 "ffprobe",
@@ -137,14 +153,12 @@ class VideoScanner(QThread):
             return "Horizontal"
         elif h >= w:
             return "Vertical"
-        return "Both"
+        return "All"
 
 class LoadingOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Tool| Qt.WindowType.FramelessWindowHint)
 
-        # This overlay is a child of VideoPlayer → stays inside window
-        #self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background-color: rgba(34, 34, 34, 160);")
 
@@ -163,31 +177,18 @@ class LoadingOverlay(QWidget):
 
         self.hide()
 
-    # ---------------------------
-    # Public API
-    # ---------------------------
-
     def update_loading_progress(self, scanned, total):
         self.loading_progress_bar.setMaximum(total)
         self.loading_progress_bar.setValue(scanned)
 
 class ControlsOverlay(QWidget):
-    """
-    A separate, frameless, and always-on-top window for media controls.
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # --- Set Window Flags for Overlay Behavior ---
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint |    # No border or title bar
-            Qt.WindowType.Tool                  # Doesn't appear in the taskbar/switch list
-        )
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
 
         self.setStyleSheet("background-color: #222;")
 
-        # Initialize control elements (moved from VideoPlayer.__init__)
-        # --- Icons (assuming they are still available in the global scope) ---
         self.loop_off_icon = resource_path(os.path.join("icons", "loop-off.svg"))
         self.loop_on_icon = resource_path(os.path.join("icons", "loop.svg"))
         self.volume_on_icon = resource_path(os.path.join("icons", "volume.svg"))
@@ -222,8 +223,8 @@ class ControlsOverlay(QWidget):
         self.orientation_label.setStyleSheet(stylesheet)
         self.orientation_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.orientation_dropdown = QComboBox()
-        self.orientation_dropdown.addItems(["Vertical", "Horizontal", "Both"])
-        self.orientation_dropdown.setCurrentText("Vertical")
+        self.orientation_dropdown.addItems(["Vertical", "Horizontal", "All"])
+        self.orientation_dropdown.setCurrentText("All")
         self.orientation_dropdown.setStyleSheet(stylesheet)
         self.orientation_dropdown.currentTextChanged.connect(self.on_orientation_changed)
         self.current_orientation = self.orientation_dropdown.currentText()
@@ -281,11 +282,6 @@ class ControlsOverlay(QWidget):
         self.max_len_inc_btn.setObjectName("time_label")
         self.time_label.setStyleSheet(stylesheet)
 
-        #----------------------------
-        # Setup the layout
-        #----------------------------
-
-        # Layot for increment and decrement max length buttons
         max_len_btn_layout = QVBoxLayout()
         max_len_btn_layout.setSpacing(1)
         max_len_btn_layout.addWidget(self.max_len_inc_btn)
@@ -321,7 +317,6 @@ class ControlsOverlay(QWidget):
         self.controls_container_layout.addLayout(progress_layout)
         self.controls_container_layout.addLayout(controls_layout)
         self.controls_container.setLayout(self.controls_container_layout)
-        #self.controls_container.hide() # Start hidden
 
         overlay_window_layout = QVBoxLayout(self)
         overlay_window_layout.setContentsMargins(0, 0, 0, 0)
@@ -380,25 +375,6 @@ class ControlsOverlay(QWidget):
     def change_max_length(self, direction):        
         new_value = self.pending_max_length + (10 * direction)
         self.set_max_length(new_value)
-        
-    def update_mask(self):
-        R = 8
-        #rect = self.rect()
-        W = self.width()
-        H = self.height()
-
-        path = QPainterPath()
-        
-        path.moveTo(0, 0)
-        path.lineTo(W, 0)
-        path.lineTo(W, H - R)
-        path.arcTo(W - 2*R, H - 2*R, 2*R, 2*R, 0, -90)
-        path.lineTo(R, H)
-        path.arcTo(0, H - 2*R, 2*R, 2*R, -90, -90)
-        path.lineTo(0, 0)
-        
-        region = QRegion(path.toFillPolygon().toPolygon())
-        self.setMask(region)
 
     def update_volume_slider_visibility(self, value):
         if value == self.volume_slider.minimum():
@@ -414,13 +390,6 @@ class ControlsOverlay(QWidget):
             self.progress_slider.setObjectName("not-minimum")
         self.progress_slider.setStyleSheet(stylesheet)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_mask()
-
-# You will need to remove the old ClickableVideoFrame class.
-# --- Helper Widget for Click Detection over QVideoWidget ---
-# QVideoWidget often swallows mouse events. This transparent overlay captures them.
 class ClickOverlay(QWidget):
     clickedLeft = pyqtSignal()
     clickedMiddle = pyqtSignal()
@@ -470,31 +439,22 @@ class ClickOverlay(QWidget):
         # Use 1/5 (20%) of the height for top/bottom zones
         sixth_h = h / 6 
 
-        # ==================== TOP AREA CLICK ====================
         if y < sixth_h:
             self.clickedTop.emit()
             return
-            
-        # ==================== BOTTOM AREA CLICK ====================
+  
         if y > h - sixth_h:
             self.clickedBottom.emit()
             return
 
-        # ==================== REMAINING MIDDLE AREA (Left/Middle/Right) ====================
-        
-        # --- LEFT AREA (Previous Video) ---
         if x < third_w:
             self.clickedLeft.emit()
             return
 
-        # --- RIGHT AREA (Next Video) ---
         if x >= 2 * third_w:
             self.clickedRight.emit()
             return
 
-        # --- MIDDLE AREA (Play/Pause/Double-Click) ---
-        
-        # FIRST CLICK
         if not self._waiting_double:
             self._waiting_double = True
             self._waiting_single = True
@@ -503,20 +463,15 @@ class ClickOverlay(QWidget):
             self._double_timeout_timer.start(self.double_timeout_ms)
             return
 
-        # SECOND CLICK
         else:
-            # if single hasn't fired yet → cancel it
             if self._waiting_single:
                 self._single_delay_timer.stop()
                 self._waiting_single = False
             else:
-                # emit single-click for the second click
                 self.clickedMiddle.emit()
 
-            # emit double-click
             self.doubleClickedMiddle.emit()
 
-            # reset
             self._waiting_double = False
             self._double_timeout_timer.stop()
             return
@@ -524,20 +479,15 @@ class ClickOverlay(QWidget):
         # For non-handled events (like Right Click), let the base class handle them (e.g., context menu)
         super().mousePressEvent(event)
 
-    # === Timer fired: single click delay expired ===
     def _emit_delayed_single(self):
         if self._waiting_single:
             self.clickedMiddle.emit()
             self._waiting_single = False
 
-    # === Timer fired: double-click window expired ===
     def _reset_double_click(self):
         self._waiting_double = False
         self._waiting_single = False
 
-# --------------------------
-# Clickable Slider (Unchanged)
-# --------------------------
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -549,50 +499,27 @@ class ClickableSlider(QSlider):
             self.sliderReleased.emit()
         super().mousePressEvent(event)
 
-# --------------------------
-# Video Player (Rewritten for QVideoWidget and Overlay)
-# --------------------------
-class VideoPlayer(QWidget):
+class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.settings = QSettings("RandomVideoPlayer", "Settings")
+
         self.resize(800, 900)
         self.setMinimumSize(500,450)
-        
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("background-color: #222;")
-        
-        self.settings = QSettings("RandomVideoPlayer", "Settings")
-        
+
+        video_widget = QVideoWidget(self)
+        self.setCentralWidget(video_widget)
+
         self.controls = ControlsOverlay(self)
-        self.controls.update_mask()
 
         self.loading = LoadingOverlay(self)
 
-        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
-        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
-
-        # --- Main Layout (Vertical Box) ---
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        # --- Video Widget ---
-        self.video_widget = QVideoWidget(self)
-        self.video_widget.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
-        self.video_widget.setStyleSheet("background-color: #222;")
-        # Note: self.video_widget is a child of self, but its positioning
-        # is managed by the main_layout.
-        main_layout.addWidget(self.video_widget)
-
-        # --- Media Player ---
         self.mediaPlayer = QMediaPlayer()
         self.audioOutput = QAudioOutput()
         self.mediaPlayer.setAudioOutput(self.audioOutput)
-        # Set the video output to the QVideoWidget
-        self.mediaPlayer.setVideoOutput(self.video_widget)
+        self.mediaPlayer.setVideoOutput(video_widget)
 
-        # --- Click Overlay (Sits on top of QVideoWidget) ---
         self.click_overlay = ClickOverlay(self)
         self.click_overlay.clickedLeft.connect(self.previous_video)
         self.click_overlay.clickedRight.connect(self.next_video)
@@ -601,7 +528,6 @@ class VideoPlayer(QWidget):
         self.click_overlay.clickedTop.connect(self.exit_fullscreen)
         self.click_overlay.clickedBottom.connect(self.toggle_controls_visibility)
 
-        # --- Player Events & Data (Unchanged) ---
         self.mediaPlayer.positionChanged.connect(self.controls.update_video_progress)
         self.mediaPlayer.durationChanged.connect(self.controls.update_video_duration)
         self.controls.progress_slider.sliderReleased.connect(self.seek_video)
@@ -610,15 +536,11 @@ class VideoPlayer(QWidget):
         self.video_list = []
         self.current_index = -1
         self.current_video_path = None
-
-        # Auto-load last folder
-        last_folder = self.settings.value("last_folder", "D:\\Porn\\Video")
-        if last_folder and os.path.exists(last_folder):
-            self.load_folder(last_folder)
-        else:
-            self.select_folder()
         
-        # --- Context Menu Actions (Unchanged) ---
+        self.check_box_unfilled_icon = QIcon(resource_path(os.path.join("icons", "square.svg")))
+        self.check_box_filled_icon = QIcon(resource_path(os.path.join("icons", "square-filled.svg")))
+
+        # Context Menu Actions
         self.mute_action = QAction("Mute", self)
         self.mute_action.setCheckable(True)
         self.mute_action.toggled.connect(self.toggle_mute)
@@ -659,46 +581,57 @@ class VideoPlayer(QWidget):
         self.update_borderless_check_icon(False)
         self.update_hide_controls_check_icon(False)
 
-        self.select_action = QAction("Select Folder")
-        self.select_action.triggered.connect(self.select_folder)
+        self.select_play_action = QAction("Select Play Folder")
+        self.select_play_action.triggered.connect(self.select_play_folder)
+
+        self.set_home_action = QAction("Set Home Folder")
+        self.set_home_action.triggered.connect(self.set_home_folder)
 
         self.open_action = QAction("Open in Explorer")
         self.open_action.triggered.connect(self.open_in_explorer)
 
-        self.copy_action = QAction("Copy to...")
-        self.copy_action.triggered.connect(self.copy_current_video_to)
+        self.save_action = QAction("Save Video As...")
+        self.save_action.triggered.connect(self.save_current_video_as)
 
         self.reload_action = QAction("Reload Folder")
         self.reload_action.triggered.connect(self.reload_current_folder)
         
-        # --- Connect Signals from the Controls Overlay to VideoPlayer Methods ---
         self.controls.loop_btn.clicked.connect(self.toggle_loop)
-        #self.controls.auto_play.clicked.connect(self.auto_play)  # Might add a auto play button to the control bar later
         self.controls.mute_btn.clicked.connect(self.toggle_mute)
         self.controls.volume_slider.valueChanged.connect(self.update_volume)
-        self.controls.volume_slider.setValue(50) # Set initial value
+        self.controls.volume_slider.setValue(50)
         self.controls.orientation_dropdown.currentTextChanged.connect(self.controls.on_orientation_changed)
 
-        # Call the function to set initial position after the main window is shown.
         self.update_overlay_position()
         self.controls.show()
         self.controls_visible = True
+
+        self.loading_folder = False
+
+        # Load Home Folder from settings. If it doesn't exist, prompt to set one.
+        self.home_folder = self.settings.value("home_folder", "")
+        if not self.home_folder == "" and os.path.exists(self.home_folder):
+            self.settings.setValue("home_folder", self.home_folder)
+        else:
+            self.set_home_folder()
+        
+        # Note: Could add a pop up to "load last folder" or "select a folder to load from the Home Folder" on startup
+        # Auto-load last folder, or if not set, select from Home Folder
+        self.last_folder = self.settings.value("last_folder", "")
+        if not self.last_folder == "" and os.path.exists(self.last_folder):
+            self.load_folder(self.last_folder)
+        else:
+            self.select_play_folder()
     
     def changeEvent(self, event):
         super().changeEvent(event)
         
-        # Check if the event is a state change (e.g., active/inactive, minimized/maximized)
         if event.type() == QEvent.Type.WindowStateChange:
-            # When the main window state changes (e.g., from minimized to active), 
-            # force an update. This is often the fix for fullscreen transitions too.
             if self.controls_visible:
                 self.update_overlay_position()
 
-        # Check if the event is a focus change (window activation)
         if event.type() == QEvent.Type.ActivationChange:
             if self.isActiveWindow() and self.controls_visible:
-                # When the main window becomes active, explicitly raise the controls window.
-                # This ensures it snaps back on top of the video widget.
                 self.controls.raise_()
     
     def update_overlay_position(self):
@@ -721,6 +654,22 @@ class VideoPlayer(QWidget):
             self.loading.raise_()
             self.loading.show()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w, h = self.width(), self.height()
+        
+        geo = self.geometry()
+        self.loading.setGeometry(geo.x(), geo.y(), geo.width(), geo.height())
+        self.click_overlay.setGeometry(0, 0, w, h)
+        
+        self.click_overlay.raise_()
+
+        self.controls.raise_()
+
+        self.loading.raise_()
+            
+        self.update_overlay_position()
+
     def show_loader(self, total=0):
         if total > 0:
             self.loading.loading_progress_bar.setMaximum(total)
@@ -730,14 +679,11 @@ class VideoPlayer(QWidget):
         self.loading.show()
         self.loading.raise_()
         self.update_overlay_position()
-
-    def hide_loader(self):
-        self.loading.hide()
         
     def moveEvent(self, event):
         super().moveEvent(event)
         self.update_overlay_position()
-        
+
     def update_mute_check_icon(self, checked):
         self.mute_action.setIcon(
             self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
@@ -761,29 +707,6 @@ class VideoPlayer(QWidget):
     def update_hide_controls_check_icon(self, checked):
         self.hide_controls_action.setIcon(
             self.check_box_filled_icon if checked else self.check_box_unfilled_icon)
-      
-    # Remove items in the current folder from the cache json and rescan the folder
-    def reload_current_folder(self):  
-        if not self.current_folder:
-            return
-
-        cache_path = get_cache_path()
-        if os.path.exists(cache_path):
-            with open(cache_path, "r") as f:
-                cache_data = json.load(f)
-        else:
-            cache_data = {}
-
-        folder = os.path.normpath(self.current_folder)
-        keys_to_remove = [k for k in list(cache_data.keys()) if os.path.normpath(k).startswith(folder)]
-
-        for k in keys_to_remove:
-            del cache_data[k]
-
-        with open(cache_path, "w") as f:
-            json.dump(cache_data, f)
-
-        self.scan_folder(folder)
         
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -796,26 +719,18 @@ class VideoPlayer(QWidget):
         menu.addAction(self.borderless_action)
         menu.addAction(self.hide_controls_action)
         menu.addSeparator()
-        menu.addAction(self.select_action)
-        menu.addAction(self.open_action)
-        menu.addAction(self.copy_action)
+        menu.addAction(self.select_play_action)
+        menu.addAction(self.set_home_action)
+        #menu.addAction(self.reload_action) # refresh cache for current Play Folder
         menu.addSeparator()
-        menu.addAction(self.reload_action)
+        menu.addAction(self.open_action)
+        menu.addAction(self.save_action)
 
         menu.exec(event.globalPos())
 
-    # --- Video / Folder Methods ---
-    def select_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Video Folder", "D:\\Porn\\Video")
-        if folder:
-            self.settings.setValue("last_folder", folder)
-            self.load_folder(folder)
-
     def update_loader_progress(self, scanned, total):
         self.loading.update_loading_progress(scanned, total)
-        self.loading.loading_progress_bar.setFormat(
-            f"Loading {self.current_folder_name}: %p% ({scanned}/{total})"
-        )
+        self.loading.loading_progress_bar.setFormat(f"Loading {self.current_folder_name}: %p% ({scanned}/{total})")
 
     def scan_folder(self, folder):
         self.loader_timer = QTimer()
@@ -829,6 +744,7 @@ class VideoPlayer(QWidget):
         self.scanner.start()
 
     def load_folder(self, folder):
+        self.loading_folder = True
         self.current_folder = folder
         self.current_folder_name = os.path.basename(folder)
         self.setWindowTitle(f"Random Video Player - {self.current_folder_name}")
@@ -837,8 +753,9 @@ class VideoPlayer(QWidget):
         self.scan_folder(folder)
 
     def on_scan_complete(self, videos):
+        self.loading_folder = False
         self.loader_timer.stop()
-        self.hide_loader() 
+        self.loading.hide()
         self.video_list = videos
         random.shuffle(self.video_list)
         print(Fore.GREEN + f"Found {len(videos)} videos." + Style.RESET_ALL)
@@ -847,9 +764,8 @@ class VideoPlayer(QWidget):
     def load_folder_with_pending_settings(self):
         self.controls.current_orientation = self.controls.pending_orientation
         self.controls.current_max_length = self.controls.pending_max_length
-        last_folder = self.settings.value("last_folder", "")
-        if last_folder and os.path.exists(last_folder):
-            self.load_folder(last_folder)
+        if self.current_folder and os.path.exists(self.current_folder):
+            self.load_folder(self.current_folder)
 
     def play_video(self):
         if not self.video_list:
@@ -865,7 +781,6 @@ class VideoPlayer(QWidget):
         url = QUrl.fromLocalFile(path)
         self.mediaPlayer.setSource(url)
 
-    # --- Controls ---
     def next_video(self):
         if (self.controls.pending_orientation != self.controls.current_orientation or
             self.controls.pending_max_length != self.controls.current_max_length):
@@ -877,6 +792,8 @@ class VideoPlayer(QWidget):
         self.load_video(self.current_index)
         if self.auto_play_enabled:
             self.mediaPlayer.play()
+        else:
+            self.mediaPlayer.pause()
 
     def previous_video(self):        
         if not self.video_list:
@@ -885,6 +802,8 @@ class VideoPlayer(QWidget):
         self.load_video(self.current_index)
         if self.auto_play_enabled:
             self.mediaPlayer.play()
+        else:
+            self.mediaPlayer.pause()
 
     def toggle_play_pause(self):
         if self.mediaPlayer.isPlaying():
@@ -907,8 +826,6 @@ class VideoPlayer(QWidget):
 
     def toggle_auto_play(self):
             self.auto_play_enabled = not self.auto_play_enabled
-            #self.controls.auto_play_btn.setChecked(self.auto_play_enabled)
-            #self.update_auto_play_button_style()
 
     def toggle_mute(self):        
         if self.audioOutput.isMuted():
@@ -951,20 +868,9 @@ class VideoPlayer(QWidget):
                 self.next_video()
 
             if self.auto_play_enabled:
-                QTimer.singleShot(50, self.mediaPlayer.play)
+                self.mediaPlayer.play()
             else:
-                QTimer.singleShot(50, self.mediaPlayer.pause)
-
-    def open_in_explorer(self):        
-        if not self.video_list or self.current_index == -1:
-            return
-        path = os.path.abspath(self.video_list[self.current_index])
-        if platform.system() == "Windows":
-            subprocess.Popen(['explorer', '/select,', path])
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", "-R", path])
-        else:
-            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+                self.mediaPlayer.pause()
 
     def toggle_fullscreen(self):        
         if self.isFullScreen():
@@ -978,7 +884,9 @@ class VideoPlayer(QWidget):
         if self.isFullScreen():
             self.showNormal()
 
-    def toggle_borderless(self): # Issue: When it goes borderless, the window size changes. But I want the window size to say the same size, but the video player should take up the entire thing including the title bar.
+    # Issue: When borderless is toggled, the window size changes. But I want the window size to say the 
+    # same size, but the video player should take up the entire thing including the title bar.
+    def toggle_borderless(self): 
         if bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint):
             print(f"\nWithout border Height: {self.height()}")
             print(f"Without border Width: {self.width()}")
@@ -1003,62 +911,91 @@ class VideoPlayer(QWidget):
             self.controls.show()
             self.update_overlay_position()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.controls.update_mask()
-        w, h = self.width(), self.height()
+    # Select a folder to play videos from. Can't do this if a folder is already loading
+    def select_play_folder(self):
+        if self.loading_folder:
+            return
         
-        geo = self.geometry()
-        self.loading.setGeometry(geo.x(), geo.y(), geo.width(), geo.height())
-        self.click_overlay.setGeometry(0, 0, w, h)
-        
-        # --- Controls Overlay Sizing ---
-        #controls_h = self.controls.controls_container.sizeHint().height()
-        #self.controls.controls_container.setGeometry(0, h - controls_h, w, controls_h)
-        #self.controls.controls_container.raise_()
-        
-        # --- Click Overlay Sizing ---
-        self.click_overlay.raise_()
+        folder = QFileDialog.getExistingDirectory(self, "Select Play Folder", self.home_folder)
+        if folder and os.path.exists(folder):
+            self.settings.setValue("last_folder", folder)
+            self.current_folder = folder
+            self.load_folder(self.current_folder)
 
-        # controls overlay above click overlay
-        self.controls.raise_()
+    def open_in_explorer(self):        
+        if not self.video_list or self.current_index == -1:
+            return
+        path = os.path.abspath(self.video_list[self.current_index])
+        if platform.system() == "Windows":
+            subprocess.Popen(['explorer', '/select,', path])
+        elif platform.system() == "Darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            subprocess.Popen(["xdg-open", os.path.dirname(path)])
 
-        # loading overlay highest when visible
-        #if self.loading.isVisible():
-        self.loading.raise_()
-            
-        self.update_overlay_position()
+    def set_home_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Home Folder", self.home_folder)
+        if folder:
+            self.settings.setValue("home_folder", folder)
+            self.home_folder = folder
+
+    # Remove items in the current folder from the cache json and rescan the folder. Can't do this if a folder is already loading
+    def reload_current_folder(self):  
+        if not self.current_folder:
+            return
+
+        if self.loading_folder:
+            return
+
+        self.loading_folder = True
+
+        cache_path = get_cache_path()
+        if os.path.exists(cache_path):
+            with open(cache_path, "r") as f:
+                cache_data = json.load(f)
+        else:
+            cache_data = {}
+
+        folder = os.path.normpath(self.current_folder)
+        keys_to_remove = [k for k in list(cache_data.keys()) if os.path.normpath(k).startswith(folder)]
+
+        for k in keys_to_remove:
+            del cache_data[k]
+
+        with open(cache_path, "w") as f:
+            json.dump(cache_data, f)
+
+        self.scan_folder(folder)
         
-    def copy_current_video_to(self):        
+    def save_current_video_as(self):        
         if not self.current_video_path:
             return
 
-        start_dir = "D:\\Porn\\Video"
-
-        target_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select Destination Folder",
-            start_dir,
-            QFileDialog.Option.ShowDirsOnly
-        )
-
-        if not target_dir:
-            return
+        start_dir = self.home_folder if self.home_folder and os.path.exists(self.home_folder) else self.current_folder
 
         source = self.current_video_path
         filename = os.path.basename(source)
         base, ext = os.path.splitext(filename)
 
-        destination = os.path.join(target_dir, filename)
+        save_path = os.path.join(self.settings.value("last_save_folder",start_dir), filename)
+
+        save_file_path, _ = QFileDialog.getSaveFileName(self, "Save Video As...", save_path, f"*{ext}")
+        save_dir = os.path.dirname(save_file_path)
+        self.settings.setValue("last_save_folder", save_dir)
+
+        if not save_dir:
+            return
+
+        destination = save_file_path
         i = 1
         while os.path.exists(destination):
-            destination = os.path.join(target_dir, f"{base} ({i}){ext}")
+            destination = os.path.join(save_dir, f"{base} ({i}){ext}")
             i += 1
 
         try:
             shutil.copy(source, destination)
         except Exception as e:
-            print(f"Copy failed: {e}")
+            print(f"Save failed: {e}")
             return
 
         try:
@@ -1076,25 +1013,7 @@ class VideoPlayer(QWidget):
             print(f"Exiftool failed: {e}")
 
 
-# --------------------------
-# Run App (Unchanged)
-# --------------------------
 if __name__ == "__main__":
-    # Best-effort hide/close any console created by python.exe on Windows.
-    # This will hide the console even when the script is launched with python.exe.
-    """if sys.platform == "win32":
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            user32 = ctypes.windll.user32
-            hwnd = kernel32.GetConsoleWindow()
-            if hwnd:
-                SW_HIDE = 0
-                user32.ShowWindow(hwnd, SW_HIDE)   # hide console window
-                kernel32.FreeConsole()             # detach from console
-        except Exception:
-            pass"""
-
     app = QApplication(sys.argv)
     player = VideoPlayer()
     player.show()

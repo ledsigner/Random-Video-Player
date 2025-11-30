@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 
 Random Video Player/build/
+
+*.exe
+*.bat

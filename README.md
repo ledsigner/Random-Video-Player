@@ -19,7 +19,7 @@ loading times. If a video is modified or a new file is added to a folder, the ca
 updated with the new info.
 
 ## Controls Layout:
-![Controls Layout](Random_Video_Player_Layout.png "Controls Layout")
+![Controls Layout](https://github.com/ledsigner/Random-Video-Player/blob/master/Random_Video_Player_Layout.png?raw=true)
 
 ## User Guide:
 When you open the exe for the first time, you'll be prompted to select a __Home Folder__ and a 

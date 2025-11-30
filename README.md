@@ -18,10 +18,15 @@ Video info is cached in local app data after the initial scan of a folder for fa
 loading times. If a video is modified or a new file is added to a folder, the cache will be 
 updated with the new info.
 
+## Getting Started
+The standalone executable can be found here: https://github.com/ledsigner/Random-Video-Player/tree/master/Random%20Video%20Player/dist
+
 ## Controls Layout:
-(Red is just for reference, not in actual program)
+(Red is just for reference, not in the actual program)
 
 ![Controls Layout](https://raw.githubusercontent.com/ledsigner/Random-Video-Player/refs/heads/master/Random_Video_Player%20layout.png)
+
+![Context Menu](https://raw.githubusercontent.com/ledsigner/Random-Video-Player/refs/heads/master/Context_Menu.png)
 
 ## User Guide:
 When you open the exe for the first time, you'll be prompted to select a __Home Folder__ and a 

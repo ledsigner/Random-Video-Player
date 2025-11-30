@@ -1,32 +1,51 @@
-# Auto Video Player
-## Features to implement:
-	1. Right click the video for a context menu with all options currently displayed in the bottom menu except the progress bar
-		1. Control bar:
-			1. Progress bar
-			2. Loop toggle
-			3. Mute toggle
-			4. Volume slider
-		2. Context menu:
-			1. Mute toggle [DONE]
-			2. Loop toggle [DONE]
-			3. Play order (single selection) [new feature]
-				1. Shuffle
-				2. Name
-				3. Date Modified
-			4. Media type (multi select) [new feature]
-				1. Videos (mp4, mov, m4v, etc...)
-				2. Pictures (jpg, jpeg, png, etc...)
-				3. Gifs (gif)
-			5. Select folder to play from [DONE]
-			6. Open in File Explorer [DONE]
-			7. Copy current video to... [DONE] (should this open the last play coppied to?)
-			8. Select default folder to copy to and to play from (shoild they be different?)
-	2. Make the video frame take up the entire window length and overlay the control bar on top of the video frame. Keep functinality for 
-	   show/hide toggle of the control bar when the bottom of the window (not including the control bar itself) is clicked. [DONE]
-	3. Default folders to open when selecting a folder and for when copying to.
+# Random Video Player
+
+## Description:
+This is a simple media player that plays videos from a selected folder (and subfolders) in random
+order. By default, videos will auto play, but this and other configurations can be changed in the
+context menu (right-click anywhere on the video). 
+
+The main window is split into clickable zones for navigation and control:
+- Center third: Play/Pause (single click), Fullscreen toggle (double click))
+- Left third: Previous video
+- Right third: Next video
+- Top: Exit fullscreen
+- Bottom: Toggle control bar visibility
+
+The control bar at the bottom of the main window has filters for orientation and max length.
+
+Video info is cached in local app data after the initial scan of a folder for faster subsequent 
+loading times. If a video is modified or a new file is added to a folder, the cache will be 
+updated with the new info.
+
+## Controls Layout:
+![Controls Layout](Random_Video_Player_Layout.png "Controls Layout")
+
+## User Guide:
+When you open the exe for the first time, you'll be prompted to select a __Home Folder__ and a 
+__Play Folder__. 
+
+__Play Folder__: The folder that videos will be played from (including videos in subfolders). 
+You can select a Play folder by right clicking anywhere on the video and selecting "Select Play 
+Folder".
+
+__Home Folder__: The default folder that will be opened when you click "Select Play Folder". 
+You can select a Home folder by right clicking anywhere on the video and selecting "Select Home 
+Folder".
+
+When you open the exe after the first time, videos will start playing from the last selected
+Play Folder.
+
+## Possible Future Features:
+	1. Selectable play order (single selection)
+		1.	Shuffle
+		2. Name
+		3. Date Modified
+	2. Media type filter (multi select)
+		1. Videos (mp4, mov, m4v, etc...)
+		2. Pictures (jpg, jpeg, png, etc...)
+		3. Gifs (gif)
 	4. Ability to modify tags on the current video
 	5. Add current file name to the window title
 	6. Next/previous video transition should be seamless, there should be no black frames during the transition
-	7. Connect volume slider to mute icon. UI elements should stay together when resizing the window. when icon is muted, volume slider goes
-				to 0. When icon is unmuted, sloder goes to value before it was muted. when volume slider is moved, the icon changes. 
-			
+	7. json or settings page for default settings like filters, loop, auto play, etc...

@@ -584,8 +584,8 @@ class VideoPlayer(QMainWindow):
         self.select_play_action = QAction("Select Play Folder")
         self.select_play_action.triggered.connect(self.select_play_folder)
 
-        self.set_home_action = QAction("Set Home Folder")
-        self.set_home_action.triggered.connect(self.set_home_folder)
+        self.select_home_action = QAction("Select Home Folder")
+        self.select_home_action.triggered.connect(self.select_home_folder)
 
         self.open_action = QAction("Open in Explorer")
         self.open_action.triggered.connect(self.open_in_explorer)
@@ -613,7 +613,7 @@ class VideoPlayer(QMainWindow):
         if not self.home_folder == "" and os.path.exists(self.home_folder):
             self.settings.setValue("home_folder", self.home_folder)
         else:
-            self.set_home_folder()
+            self.select_home_folder()
         
         # Note: Could add a pop up to "load last folder" or "select a folder to load from the Home Folder" on startup
         # Auto-load last folder, or if not set, select from Home Folder
@@ -720,7 +720,7 @@ class VideoPlayer(QMainWindow):
         menu.addAction(self.hide_controls_action)
         menu.addSeparator()
         menu.addAction(self.select_play_action)
-        menu.addAction(self.set_home_action)
+        menu.addAction(self.select_home_action)
         #menu.addAction(self.reload_action) # refresh cache for current Play Folder
         menu.addSeparator()
         menu.addAction(self.open_action)
@@ -933,7 +933,7 @@ class VideoPlayer(QMainWindow):
         else:
             subprocess.Popen(["xdg-open", os.path.dirname(path)])
 
-    def set_home_folder(self):
+    def select_home_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Home Folder", self.home_folder)
         if folder:
             self.settings.setValue("home_folder", folder)

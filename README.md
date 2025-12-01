@@ -12,14 +12,12 @@ The main window is split into clickable zones for navigation and control:
 - Top: Exit fullscreen
 - Bottom: Toggle control bar visibility
 
-The control bar at the bottom of the main window has filters for orientation and max length.
+The control bar at the bottom of the main window has filters for orientation and max length. The
+filters will be applied automatically by going to the next video.
 
 Video info is cached in local app data after the initial scan of a folder for faster subsequent 
 loading times. If a video is modified or a new file is added to a folder, the cache will be 
 updated with the new info.
-
-## Getting Started
-The standalone executable can be found here: https://github.com/ledsigner/Random-Video-Player/tree/master/Random%20Video%20Player/dist
 
 ## Controls Layout:
 (Red is just for reference, not in the actual program)
@@ -29,7 +27,7 @@ The standalone executable can be found here: https://github.com/ledsigner/Random
 ![Context Menu](https://raw.githubusercontent.com/ledsigner/Random-Video-Player/refs/heads/master/Context_Menu.png)
 
 ## User Guide:
-When you open the exe for the first time, you'll be prompted to select a __Home Folder__ and a 
+When you start the program for the first time, you'll be prompted to select a __Home Folder__ and a 
 __Play Folder__. 
 
 __Play Folder__: The folder that videos will be played from (including videos in subfolders). 
@@ -40,8 +38,7 @@ __Home Folder__: The default folder that will be opened when you click "Select P
 You can select a Home folder by right clicking anywhere on the video and selecting "Select Home 
 Folder".
 
-When you open the exe after the first time, videos will start playing from the last selected
-Play Folder.
+The next time you start the program, videos will start playing from the last selected Play Folder.
 
 ## Possible Future Features:
 	1. Selectable play order (single selection)
